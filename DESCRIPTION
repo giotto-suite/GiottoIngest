@@ -21,6 +21,8 @@ Imports:
     tilework
 Suggests:
     arrow,
+    DBI,
+    duckdb,
     GiottoDisk,
     terra,
     dplyr,

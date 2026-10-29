@@ -11,6 +11,7 @@ use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
 use parquet::basic::Compression;
+use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
 
 /// The leading columns of a point tile part, rows taken in `ord`.
@@ -46,11 +47,14 @@ pub fn base_columns(
 }
 
 /// Writes one parquet file (snappy, 1 Mi-row groups), creating its directory;
-/// `geo` is the GeoParquet metadata, if any.
+/// `geo` is the GeoParquet metadata, if any. It goes in the file's key-value
+/// metadata, where GeoParquet readers (DuckDB spatial, SedonaDB) look for
+/// it, as arrow C++ writes it; arrow-rs on its own keeps schema metadata
+/// only inside the embedded `ARROW:schema`.
 pub fn write_parquet(
     path: &str, fields: Vec<Field>, cols: Vec<ArrayRef>, geo: Option<String>,
 ) -> Result<(), String> {
-    let md: HashMap<String, String> = geo.map(|g| HashMap::from([("geo".to_string(), g)])).unwrap_or_default();
+    let md: HashMap<String, String> = geo.clone().map(|g| HashMap::from([("geo".to_string(), g)])).unwrap_or_default();
     let schema = Arc::new(Schema::new_with_metadata(fields, md));
     let batch = RecordBatch::try_new(schema.clone(), cols).map_err(|e| e.to_string())?;
     if let Some(d) = std::path::Path::new(path).parent() {
@@ -60,9 +64,33 @@ pub fn write_parquet(
     let props = WriterProperties::builder()
         .set_compression(Compression::SNAPPY)
         .set_max_row_group_size(1 << 20)
+        .set_key_value_metadata(geo.map(|g| vec![KeyValue::new("geo".to_string(), g)]))
         .build();
     let mut w = ArrowWriter::try_new(f, schema, Some(props)).map_err(|e| e.to_string())?;
     w.write(&batch).map_err(|e| e.to_string())?;
     w.close().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use parquet::file::reader::{FileReader, SerializedFileReader};
+
+    /// GeoParquet readers find `geo` in the file's key-value metadata.
+    #[test]
+    fn geo_is_file_key_value_metadata() {
+        let x = [1.0, 2.0];
+        let y = [3.0, 4.0];
+        let (fields, cols) = base_columns(&x, &y, &[0, 1], 0.0, true);
+        let p = std::env::temp_dir().join(format!("gi_kv_{}.parquet", std::process::id()));
+        let p = p.to_str().unwrap().to_string();
+        write_parquet(&p, fields, cols, Some("{\"version\":\"1.0.0\"}".into())).unwrap();
+        let r = SerializedFileReader::new(File::open(&p).unwrap()).unwrap();
+        let kv = r.metadata().file_metadata().key_value_metadata().cloned().unwrap_or_default();
+        std::fs::remove_file(&p).ok();
+        let geo: Vec<_> = kv.iter().filter(|k| k.key == "geo").collect();
+        assert_eq!(geo.len(), 1);
+        assert_eq!(geo[0].value.as_deref(), Some("{\"version\":\"1.0.0\"}"));
+    }
 }

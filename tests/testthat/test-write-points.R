@@ -258,3 +258,21 @@ test_that("a later file missing a metadata column matches R", {
     fs <- c(write_pq(df[1:2000, ]), write_pq(df[2001:4000, names(df) != "cell_id"]))
     expect_same_store(both_stores(fs))
 })
+
+test_that("geo metadata is in the file's key-value metadata, where DuckDB looks", {
+    skip_if_not_installed("duckdb")
+    skip_if_not_installed("DBI")
+    f <- write_pq(synth_points(500))
+    out <- tempfile()
+    gi_write_points(gi_source(f, "x", "y"), list(bounds = rbind(c(0, 100, 0, 50)), n = 1),
+        out, "gene")
+    p <- list.files(out, pattern = "parquet$", recursive = TRUE, full.names = TRUE)[1]
+    con <- DBI::dbConnect(duckdb::duckdb())
+    on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
+    kv <- DBI::dbGetQuery(con, sprintf(
+        "SELECT decode(key) AS key, decode(value) AS value FROM parquet_kv_metadata(%s)",
+        DBI::dbQuoteString(con, p)))
+    expect_true("geo" %in% kv$key)
+    expect_identical(kv$value[kv$key == "geo"],
+        arrow::ParquetFileReader$create(p)$GetSchema()$metadata$geo)
+})
