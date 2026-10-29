@@ -36,9 +36,19 @@ jobs:
           r-version: ${{ matrix.config.r }}
           use-public-rspm: true
           extra-repositories: https://drieslab.r-universe.dev https://giotto-suite.r-universe.dev
+      # Hard dependencies plus what the tests need; GiottoDisk (Suggests) is
+      # on no repository yet, so its comparisons skip here
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::rcmdcheck
+          dependencies: '"hard"'
+          extra-packages: |
+            any::rcmdcheck
+            any::testthat
+            any::arrow
+            any::terra
+            any::dplyr
+            any::rlang
+            any::future
           needs: check
       - uses: r-lib/actions/check-r-package@v2
         with:
