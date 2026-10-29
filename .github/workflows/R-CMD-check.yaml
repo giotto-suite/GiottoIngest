@@ -36,20 +36,15 @@ jobs:
           r-version: ${{ matrix.config.r }}
           use-public-rspm: true
           extra-repositories: https://drieslab.r-universe.dev https://giotto-suite.r-universe.dev
-      # Hard dependencies plus what the tests need; GiottoDisk (Suggests) is
-      # on no repository yet, so its comparisons skip here
-      - uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          dependencies: '"hard"'
-          extra-packages: |
-            any::rcmdcheck
-            any::testthat
-            any::arrow
-            any::terra
-            any::dplyr
-            any::rlang
-            any::future
-          needs: check
+      # Installed directly: pak resolves every Suggests, and GiottoDisk is on
+      # no repository yet. Its comparison tests skip without it.
+      - name: Install dependencies
+        shell: Rscript {0}
+        run: |
+          install.packages(c("tilework", "rcmdcheck", "testthat", "arrow", "terra",
+              "dplyr", "rlang", "future"))
+          stopifnot(all(c("tilework", "rcmdcheck", "testthat", "arrow") %in%
+              rownames(installed.packages())))
       - uses: r-lib/actions/check-r-package@v2
         with:
           args: 'c("--no-manual", "--as-cran")'
