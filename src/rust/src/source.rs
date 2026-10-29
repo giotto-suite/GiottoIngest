@@ -4,10 +4,12 @@
 
 use std::fs::File;
 
-use arrow::array::{ArrayRef, BooleanArray, Float64Array};
+use std::sync::Arc;
+
+use arrow::array::{new_null_array, Array, ArrayRef, BooleanArray, Float64Array};
 use arrow::compute::kernels::cmp;
-use arrow::compute::{and, cast, filter_record_batch};
-use arrow::datatypes::{DataType, SchemaRef};
+use arrow::compute::{and, cast, filter_record_batch, or};
+use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
@@ -16,7 +18,8 @@ use rayon::prelude::*;
 pub struct Filter {
     pub col: String,
     pub op: String,
-    pub value: f64,
+    /// one value, or the set for `in`
+    pub values: Vec<f64>,
 }
 
 pub struct Spec {
@@ -64,15 +67,16 @@ fn units(spec: &Spec) -> Result<Vec<Unit>, String> {
     Ok(out)
 }
 
-fn read_unit(spec: &Spec, u: &Unit, cols: &[String]) -> Result<Vec<RecordBatch>, String> {
+/// Reads `cols` of one row group as the first file's schema has them, the
+/// way R's `open_dataset()` reads several files: later files' columns are
+/// cast to the first file's types, and columns a later file lacks are null.
+fn read_unit(spec: &Spec, u: &Unit, cols: &[String], target: &Schema) -> Result<Vec<RecordBatch>, String> {
     let path = &spec.files[u.file];
     let f = File::open(path).map_err(|e| format!("{path}: {e}"))?;
     let b = ParquetRecordBatchReaderBuilder::try_new(f).map_err(|e| format!("{path}: {e}"))?;
     let sch = b.schema().clone();
-    let roots: Vec<usize> = cols
-        .iter()
-        .map(|c| sch.index_of(c).map_err(|_| format!("{path}: no column `{c}`")))
-        .collect::<Result<_, _>>()?;
+    let mut roots: Vec<usize> = cols.iter().filter_map(|c| sch.index_of(c).ok()).collect();
+    roots.sort_unstable();
     let mask = ProjectionMask::roots(b.parquet_schema(), roots);
     let rdr = b
         .with_row_groups(vec![u.rg])
@@ -80,7 +84,20 @@ fn read_unit(spec: &Spec, u: &Unit, cols: &[String]) -> Result<Vec<RecordBatch>,
         .with_batch_size(1 << 16)
         .build()
         .map_err(|e| format!("{path}: {e}"))?;
-    rdr.map(|r| r.map_err(|e| format!("{path}: {e}"))).collect()
+    let out_fields: Vec<Field> = cols.iter()
+        .map(|c| target.field_with_name(c).cloned().map_err(|_| format!("no column `{c}`")))
+        .collect::<Result<_, _>>()?;
+    let out_schema = Arc::new(Schema::new(out_fields));
+    rdr.map(|r| {
+        let b = r.map_err(|e| format!("{path}: {e}"))?;
+        let n = b.num_rows();
+        let arrays: Vec<ArrayRef> = out_schema.fields().iter().map(|f| match b.column_by_name(f.name()) {
+            Some(a) if a.data_type() == f.data_type() => Ok(a.clone()),
+            Some(a) => cast(a, f.data_type()).map_err(|e| format!("{path}: cast `{}`: {e}", f.name())),
+            None => Ok(new_null_array(f.data_type(), n)),
+        }).collect::<Result<_, _>>()?;
+        RecordBatch::try_new(out_schema.clone(), arrays).map_err(|e| format!("{path}: {e}"))
+    }).collect()
 }
 
 fn as_f64(a: &ArrayRef) -> Result<Float64Array, String> {
@@ -97,20 +114,32 @@ fn apply_filters(spec: &Spec, b: RecordBatch) -> Result<RecordBatch, String> {
     let mut mask: Option<BooleanArray> = None;
     for f in &spec.filters {
         let col = b.column_by_name(&f.col).ok_or(format!("no column `{}`", f.col))?;
-        let v = as_f64(col)?;
+        let v_col = as_f64(col)?;
         // arrow casts the scalar to a float32 column's type before comparing
-        let val = if col.data_type() == &DataType::Float32 { f.value as f32 as f64 } else { f.value };
-        let s = Float64Array::new_scalar(val);
-        let m = match f.op.as_str() {
-            ">=" => cmp::gt_eq(&v, &s),
-            ">" => cmp::gt(&v, &s),
-            "<=" => cmp::lt_eq(&v, &s),
-            "<" => cmp::lt(&v, &s),
-            "==" => cmp::eq(&v, &s),
-            "!=" => cmp::neq(&v, &s),
-            o => return Err(format!("unsupported filter op `{o}`")),
-        }
-        .map_err(|e| e.to_string())?;
+        let m = if f.op == "in" {
+            // R's %in% on a numeric column: equality with any value, NA dropped
+            let mut m: Option<BooleanArray> = None;
+            for v in &f.values {
+                let val = if col.data_type() == &DataType::Float32 { *v as f32 as f64 } else { *v };
+                let e = cmp::eq(&v_col, &Float64Array::new_scalar(val)).map_err(|e| e.to_string())?;
+                m = Some(match m { None => e, Some(p) => or(&p, &e).map_err(|e| e.to_string())? });
+            }
+            m.unwrap_or_else(|| BooleanArray::from(vec![false; v_col.len()]))
+        } else {
+            let one = *f.values.first().ok_or(format!("filter on `{}` has no value", f.col))?;
+            let val = if col.data_type() == &DataType::Float32 { one as f32 as f64 } else { one };
+            let s = Float64Array::new_scalar(val);
+            match f.op.as_str() {
+                ">=" => cmp::gt_eq(&v_col, &s),
+                ">" => cmp::gt(&v_col, &s),
+                "<=" => cmp::lt_eq(&v_col, &s),
+                "<" => cmp::lt(&v_col, &s),
+                "==" => cmp::eq(&v_col, &s),
+                "!=" => cmp::neq(&v_col, &s),
+                o => return Err(format!("unsupported filter op `{o}`")),
+            }
+            .map_err(|e| e.to_string())?
+        };
         mask = Some(match mask {
             None => m,
             Some(p) => and(&p, &m).map_err(|e| e.to_string())?,
@@ -120,12 +149,21 @@ fn apply_filters(spec: &Spec, b: RecordBatch) -> Result<RecordBatch, String> {
 }
 
 /// Coordinates of a (filtered) batch as doubles, y negated when flipping.
+/// A null coordinate is NaN, so it is in no tile and not in the extent, as
+/// R's comparisons and `min(na.rm = TRUE)` treat NA; the row still counts in
+/// the source's `n`, as in R's `nrow()`.
 pub fn xy(spec: &Spec, b: &RecordBatch) -> Result<(Vec<f64>, Vec<f64>), String> {
     let x = as_f64(b.column_by_name(&spec.x).ok_or(format!("no column `{}`", spec.x))?)?;
     let y = as_f64(b.column_by_name(&spec.y).ok_or(format!("no column `{}`", spec.y))?)?;
-    let xs: Vec<f64> = x.values().to_vec();
-    let ys: Vec<f64> = if spec.flip_y { y.values().iter().map(|v| -v).collect() } else { y.values().to_vec() };
-    Ok((xs, ys))
+    let vals = |a: &Float64Array, neg: bool| -> Vec<f64> {
+        let s = if neg { -1.0 } else { 1.0 };
+        if a.null_count() == 0 {
+            a.values().iter().map(|v| v * s).collect()
+        } else {
+            a.iter().map(|v| v.map_or(f64::NAN, |v| v * s)).collect()
+        }
+    };
+    Ok((vals(&x, false), vals(&y, spec.flip_y)))
 }
 
 /// Calls `f` on every filtered batch, in source order. Row groups are decoded
@@ -143,12 +181,13 @@ pub fn for_each_batch(
         }
     }
     let us = units(spec)?;
+    let target = source_schema(spec)?;
     let window = (threads * 2).max(1);
     for chunk in us.chunks(window) {
         let decoded: Vec<Result<Vec<RecordBatch>, String>> = chunk
             .par_iter()
             .map(|u| {
-                read_unit(spec, u, &need)?
+                read_unit(spec, u, &need, &target)?
                     .into_iter()
                     .map(|b| apply_filters(spec, b))
                     .collect()
@@ -164,7 +203,6 @@ pub fn for_each_batch(
     }
     Ok(())
 }
-
 
 /// Maps every row group to a partial result in parallel and folds the
 /// partials; for order-free passes (extent, counts).
@@ -182,10 +220,11 @@ pub fn reduce_units<T: Send>(
         }
     }
     let us = units(spec)?;
+    let target = source_schema(spec)?;
     us.par_iter()
         .map(|u| -> Result<T, String> {
             let mut acc = init();
-            for b in read_unit(spec, u, &need)? {
+            for b in read_unit(spec, u, &need, &target)? {
                 let b = apply_filters(spec, b)?;
                 if b.num_rows() > 0 {
                     each(&mut acc, b)?;

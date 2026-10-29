@@ -186,11 +186,34 @@ test_that("int64 columns are written as R writes them", {
     expect_same_store(both_stores(write_pq(tbl)))
 })
 
-test_that("dictionary (factor) columns are written as R writes them", {
+test_that("dictionary (factor) columns keep R's values and index type", {
     skip_if_no_reference()
+    # R's tiles carry R's own "r" schema metadata, from which arrow in R
+    # restores the factor's original levels() order; a parquet dictionary
+    # (all a non-R writer can store) only holds levels in order of first
+    # appearance. So compare the values as strings and the arrow types.
     df <- synth_points(3000, digits = 4)
     df$gene <- factor(df$gene)
-    expect_same_store(both_stores(df))
+    df$lab <- factor(sprintf("L%03d", df$tid %% 200))  # >= 127 levels: int16 indices
+    b <- both_stores(df)
+    expect_identical(b$plan$bounds, b$r$bounds)
+    as_chr <- function(root) {
+        lapply(tile_dirs(root), function(d) {
+            t <- read_tile(d)
+            t <- t[order(t$tid), c("tid", "feat_ID", "lab")]
+            t$feat_ID <- as.character(t$feat_ID); t$lab <- as.character(t$lab)
+            rownames(t) <- NULL
+            t
+        })
+    }
+    expect_identical(as_chr(b$s$root), as_chr(b$r$root))
+    type_of <- function(root, col) {
+        f <- list.files(tile_dirs(root)[1], pattern = "parquet$", full.names = TRUE)[1]
+        arrow::ParquetFileReader$create(f)$GetSchema()[[col]]$type$ToString()
+    }
+    for (col in c("feat_ID", "lab")) {
+        expect_identical(type_of(b$s$root, col), type_of(b$r$root, col))
+    }
 })
 
 test_that("binary id columns cast to string match R", {

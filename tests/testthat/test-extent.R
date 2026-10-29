@@ -54,6 +54,18 @@ test_that("a float32 filter column compares like arrow (threshold not exact in f
     }
 })
 
+test_that("filter op `in` keeps the same rows as R's %in%", {
+    skip_if_no_reference()
+    # MERSCOPE's reader keeps a set of FOVs; NA rows are dropped
+    df <- synth_points(3000)
+    df$fov <- df$tid %% 40L
+    df$fov[c(3, 77)] <- NA
+    expect_extent_matches(df, filters = list(list(col = "fov", op = "in", value = c(1, 5, 7, 38))))
+    tbl <- arrow::arrow_table(df)
+    tbl$fov <- tbl$fov$cast(arrow::float32())
+    expect_extent_matches(tbl, filters = list(list(col = "fov", op = "in", value = c(0.1, 5))))
+})
+
 test_that("several filters combine with AND", {
     skip_if_no_reference()
     expect_extent_matches(synth_points(3000), filters = list(

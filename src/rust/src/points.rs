@@ -9,8 +9,10 @@ use std::fs::{create_dir_all, File};
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, BinaryBuilder, Float64Array, Int32Array, RecordBatch, UInt32Array,
+    Array, ArrayRef, AsArray, BinaryBuilder, DictionaryArray, Float64Array, Int16Array, Int32Array,
+    Int8Array, RecordBatch, StringArray, UInt32Array,
 };
+use arrow::datatypes::{Int16Type, Int32Type, Int8Type};
 use arrow::compute::{cast, concat_batches, take};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use arrow::ipc::reader::FileReader;
@@ -56,22 +58,113 @@ pub fn count_tiles(spec: &Spec, bounds: Vec<[f64; 4]>, _threads: usize) -> Resul
     }, |mut a, c| { for (u, v) in a.iter_mut().zip(c) { *u += v; } a })
 }
 
-/// Output type of a source column after R's collect / as.data.table / arrow
-/// round trip, as GiottoDisk writes it.
-fn r_type(dt: &DataType, to_string: bool) -> Result<DataType, String> {
+/// How a source column is carried through the spill and typed at write
+/// time, following the R round trip GiottoDisk's writer applies to each
+/// tile (`collect()` to R, then back to arrow).
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    /// final type already decided from the schema
+    Plain,
+    /// uint32 / uint64: int32 when the tile's values fit, else double
+    FitUnsigned,
+    /// int64: int32 when the tile's values fit, else int64
+    FitSigned,
+    /// dictionary (R factor): spilled as strings, re-encoded with the levels
+    Dict,
+}
+
+/// Spill type and kind of a source column. `to_string` columns are cast
+/// to string, as the reader's schema does.
+fn spill_type(dt: &DataType, to_string: bool) -> Result<(DataType, Kind), String> {
+    use DataType::*;
     if to_string {
-        return Ok(DataType::Utf8);
+        return Ok((Utf8, Kind::Plain));
     }
     Ok(match dt {
-        DataType::Float16 | DataType::Float32 | DataType::Float64 => DataType::Float64,
-        DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::UInt8 | DataType::UInt16 => {
-            DataType::Int32
-        }
-        DataType::UInt32 => DataType::Float64,
-        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => DataType::Utf8,
-        DataType::Boolean => DataType::Boolean,
+        Float16 | Float32 | Float64 => (Float64, Kind::Plain),
+        Int8 | Int16 | Int32 | UInt8 | UInt16 => (Int32, Kind::Plain),
+        UInt32 | UInt64 => (dt.clone(), Kind::FitUnsigned),
+        Int64 => (Int64, Kind::FitSigned),
+        Utf8 | LargeUtf8 | Utf8View => (Utf8, Kind::Plain),
+        Binary | LargeBinary | BinaryView => (Binary, Kind::Plain),
+        Boolean => (Boolean, Kind::Plain),
+        Date32 => (Date32, Kind::Plain),
+        Dictionary(_, v) if matches!(v.as_ref(), Utf8 | LargeUtf8 | Utf8View) => (Utf8, Kind::Dict),
         o => return Err(format!("column type {o} not supported yet")),
     })
+}
+
+/// R's integers are 32-bit with -2^31 reserved for NA.
+const R_INT_MAX: f64 = 2147483647.0;
+
+/// One tile's column in the type R writes it with.
+fn finalize(c: &ArrayRef, kind: Kind, levels: Option<&Levels>) -> Result<ArrayRef, String> {
+    let fits = |lo: f64, hi: f64| lo >= -R_INT_MAX && hi <= R_INT_MAX;
+    match kind {
+        Kind::Plain => Ok(c.clone()),
+        Kind::FitUnsigned | Kind::FitSigned => {
+            let v = cast(c, &DataType::Float64).map_err(|e| e.to_string())?;
+            let v = v.as_any().downcast_ref::<Float64Array>().unwrap();
+            let lo = arrow::compute::min(v).unwrap_or(0.0);
+            let hi = arrow::compute::max(v).unwrap_or(0.0);
+            let to = if fits(lo, hi) {
+                DataType::Int32
+            } else if kind == Kind::FitSigned {
+                DataType::Int64
+            } else {
+                DataType::Float64
+            };
+            cast(c, &to).map_err(|e| e.to_string())
+        }
+        Kind::Dict => levels.ok_or("dictionary levels missing")?.encode(c),
+    }
+}
+
+/// Factor levels of a dictionary column: the union of the source's
+/// dictionaries in scan order (one shared dictionary in the usual case).
+#[derive(Default)]
+struct Levels {
+    values: Vec<String>,
+    index: HashMap<String, usize>,
+}
+
+impl Levels {
+    fn add(&mut self, c: &ArrayRef) -> Result<(), String> {
+        let d = c.as_any_dictionary_opt().ok_or("expected a dictionary column")?;
+        let v = cast(d.values(), &DataType::Utf8).map_err(|e| e.to_string())?;
+        let v = v.as_any().downcast_ref::<StringArray>().unwrap();
+        for s in v.iter().flatten() {
+            if !self.index.contains_key(s) {
+                self.index.insert(s.to_string(), self.values.len());
+                self.values.push(s.to_string());
+            }
+        }
+        Ok(())
+    }
+
+    /// R's index type: int8 below 127 levels, int16 below 32767, else int32.
+    fn encode(&self, c: &ArrayRef) -> Result<ArrayRef, String> {
+        let s = c.as_any().downcast_ref::<StringArray>().ok_or("expected strings")?;
+        let keys: Vec<Option<i64>> = s.iter()
+            .map(|v| v.map(|v| self.index.get(v).map(|k| *k as i64).ok_or(format!("level `{v}` unknown"))).transpose())
+            .collect::<Result<_, _>>()?;
+        let values: ArrayRef = Arc::new(StringArray::from(self.values.clone()));
+        let n = self.values.len();
+        let out: ArrayRef = if n < 127 {
+            Arc::new(DictionaryArray::<Int8Type>::try_new(
+                Int8Array::from(keys.iter().map(|k| k.map(|k| k as i8)).collect::<Vec<_>>()), values)
+                .map_err(|e| e.to_string())?)
+        } else if n < 32767 {
+            Arc::new(DictionaryArray::<Int16Type>::try_new(
+                Int16Array::from(keys.iter().map(|k| k.map(|k| k as i16)).collect::<Vec<_>>()), values)
+                .map_err(|e| e.to_string())?)
+        } else {
+            Arc::new(DictionaryArray::<Int32Type>::try_new(
+                Int32Array::from(keys.iter().map(|k| k.map(|k| k as i32)).collect::<Vec<_>>()), values)
+                .map_err(|e| e.to_string())?)
+        };
+        Ok(out)
+    }
 }
 
 /// GiottoDisk's `.morton_encode()`, with R's signed 32-bit wrap; `None` is NA.
@@ -122,12 +215,16 @@ pub fn write_tiles(
         }
     }
     let mut meta_fields = Vec::with_capacity(meta.len());
+    let mut kinds = Vec::with_capacity(meta.len());
     for m in &meta {
         let f = src.field_with_name(m).map_err(|_| format!("no column `{m}`"))?;
-        let dt = r_type(f.data_type(), o.to_string.contains(m))?;
+        let (dt, kind) = spill_type(f.data_type(), o.to_string.contains(m))?;
         let name = if m == &o.id_col { "feat_ID".to_string() } else { m.clone() };
         meta_fields.push(Field::new(name, dt, true));
+        kinds.push(kind);
     }
+    let mut levels: Vec<Option<Levels>> =
+        kinds.iter().map(|k| if *k == Kind::Dict { Some(Levels::default()) } else { None }).collect();
     // spill schema: x, y (flipped, double) then meta in output types
     let mut sf = vec![Field::new("__x", DataType::Float64, true), Field::new("__y", DataType::Float64, true)];
     sf.extend(meta_fields.iter().cloned());
@@ -169,8 +266,9 @@ pub fn write_tiles(
         let mut cols: Vec<ArrayRef> = vec![
             Arc::new(Float64Array::from(xs)), Arc::new(Float64Array::from(ys)),
         ];
-        for (m, f) in meta.iter().zip(&meta_fields) {
+        for ((m, f), lv) in meta.iter().zip(&meta_fields).zip(levels.iter_mut()) {
             let c = b.column_by_name(m).ok_or(format!("no column `{m}`"))?;
+            if let Some(lv) = lv { lv.add(c)?; }
             cols.push(cast(c, f.data_type()).map_err(|e| format!("cast {m}: {e}"))?);
         }
         let mut keys: Vec<u32> = idx.keys().copied().collect();
@@ -206,14 +304,16 @@ pub fn write_tiles(
         }
         let all = concat_batches(&spill_schema, &bs).map_err(|e| e.to_string())?;
         drop(bs);
-        write_tile(&all, &meta_fields, &o.root, &o.tile_dirs[k], &o.geo_json, o.geom)
+        write_tile(&all, &meta_fields, &kinds, &levels, &o.root, &o.tile_dirs[k], &o.geo_json, o.geom)
     })?;
     std::fs::remove_dir(&o.spill_dir).ok();
     Ok(counts)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_tile(
-    all: &RecordBatch, meta_fields: &[Field], root: &str, dir: &str, geo: &str, with_geom: bool,
+    all: &RecordBatch, meta_fields: &[Field], kinds: &[Kind], levels: &[Option<Levels>], root: &str,
+    dir: &str, geo: &str, with_geom: bool,
 ) -> Result<(), String> {
     let n = all.num_rows();
     let x = all.column(0).as_any().downcast_ref::<Float64Array>().unwrap();
@@ -249,9 +349,10 @@ fn write_tile(
         fields.push(Field::new("geom", DataType::Binary, true));
         cols.push(Arc::new(geom.finish()));
     }
-    fields.extend(meta_fields.iter().cloned());
-    for c in all.columns().iter().skip(2) {
-        cols.push(take(c.as_ref(), &ordv, None).map_err(|e| e.to_string())?);
+    for (((c, f), kind), lv) in all.columns().iter().skip(2).zip(meta_fields).zip(kinds).zip(levels) {
+        let c = finalize(&take(c.as_ref(), &ordv, None).map_err(|e| e.to_string())?, *kind, lv.as_ref())?;
+        fields.push(Field::new(f.name(), c.data_type().clone(), true));
+        cols.push(c);
     }
     let md: HashMap<String, String> = if with_geom {
         HashMap::from([("geo".to_string(), geo.to_string())])

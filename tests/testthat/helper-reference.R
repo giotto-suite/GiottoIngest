@@ -38,7 +38,8 @@ read_fun_for <- function(sx, sy, flip = FALSE, filters = list(), to_string = cha
         }
         q <- arrow::open_dataset(x, schema = schema)
         for (f in filters) {
-            q <- dplyr::filter(q, !!rlang::call2(f$op, as.name(f$col), f$value))
+            op <- if (f$op == "in") "%in%" else f$op
+            q <- dplyr::filter(q, !!rlang::call2(op, as.name(f$col), f$value))
         }
         if (flip) q <- dplyr::mutate(q, !!rlang::sym(sy) := -!!rlang::sym(sy))
         q

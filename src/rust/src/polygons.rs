@@ -19,7 +19,13 @@ use rayon::prelude::*;
 use crate::source::{for_each_batch, reduce_units, source_schema, Spec};
 use crate::tiles::Tiles;
 
-type Env = HashMap<String, [f64; 4]>;
+/// Envelope per polygon id; `None` is the null id, which R groups as one
+/// polygon (`group_by()` keeps NA as a group).
+type Env = HashMap<Option<String>, [f64; 4]>;
+
+fn key(k: &StringArray, i: usize) -> Option<String> {
+    if k.is_null(i) { None } else { Some(k.value(i).to_string()) }
+}
 
 fn keys(b: &RecordBatch, group: &str) -> Result<StringArray, String> {
     let c = b.column_by_name(group).ok_or(format!("no column `{group}`"))?;
@@ -50,8 +56,7 @@ pub fn route_polygons(
         let k = keys(&b, group)?;
         let (xs, ys) = coords(spec, &b)?;
         for i in 0..xs.len() {
-            if k.is_null(i) { continue; }
-            let e = acc.entry(k.value(i).to_string())
+            let e = acc.entry(key(&k, i))
                 .or_insert([f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY]);
             if !xs[i].is_nan() { e[0] = e[0].min(xs[i]); e[1] = e[1].max(xs[i]); }
             if !ys[i].is_nan() { e[2] = e[2].min(ys[i]); e[3] = e[3].max(ys[i]); }
@@ -73,12 +78,18 @@ pub fn route_polygons(
     };
     let mut hit = Vec::new();
     let mut tile_of: HashMap<String, u32> = HashMap::with_capacity(env.len());
+    let mut null_tile: Option<u32> = None;
     let mut unassigned = 0f64;
     for (k, e) in &env {
         tiles.matches(mid(e[0], e[1], x32), mid(e[2], e[3], y32), &mut hit);
         if hit.is_empty() { unassigned += 1.0; }
         // a centroid on no tile edge meets one tile at most
-        if let Some(t) = hit.first() { tile_of.insert(k.clone(), *t); }
+        if let Some(t) = hit.first() {
+            match k {
+                Some(k) => { tile_of.insert(k.clone(), *t); }
+                None => null_tile = Some(*t),
+            }
+        }
     }
     let groups = env.len() as f64;
     drop(env);
@@ -91,8 +102,8 @@ pub fn route_polygons(
         let k = keys(&b, group)?;
         let mut idx: HashMap<u32, Vec<u32>> = HashMap::new();
         for i in 0..b.num_rows() {
-            if k.is_null(i) { continue; }
-            if let Some(t) = tile_of.get(k.value(i)) {
+            let t = if k.is_null(i) { null_tile.as_ref() } else { tile_of.get(k.value(i)) };
+            if let Some(t) = t {
                 idx.entry(*t).or_default().push(i as u32);
             }
         }

@@ -12,7 +12,7 @@ test_that("gi_source builds the spec it documents", {
         filters = list(list(col = "qv", op = ">=", value = 20)))
     expect_identical(s$f_cols, "qv")
     expect_identical(s$f_ops, ">=")
-    expect_identical(s$f_vals, 20)
+    expect_identical(s$f_vals, list(20))
     expect_true(s$flip_y)
     expect_identical(s$files, normalizePath(f))
 })
@@ -21,7 +21,7 @@ test_that("gi_source accepts no filters", {
     s <- gi_source(pts_file(), "x", "y")
     expect_length(s$f_cols, 0L)
     expect_length(s$f_vals, 0L)
-    expect_type(s$f_vals, "double")
+    expect_type(s$f_vals, "list")
 })
 
 test_that("gi_source accepts an integer filter value", {
@@ -29,7 +29,7 @@ test_that("gi_source accepts an integer filter value", {
     f <- pts_file()
     expect_no_error(s <- gi_source(f, "x", "y",
         filters = list(list(col = "qv", op = ">=", value = 20L))))
-    expect_identical(s$f_vals, 20)
+    expect_identical(s$f_vals, list(20))
 })
 
 test_that("a missing input file is an R error", {
@@ -50,8 +50,10 @@ test_that("a missing filter column is an R error", {
 })
 
 test_that("an unsupported filter op is an R error", {
-    s <- gi_source(pts_file(), "x", "y", filters = list(list(col = "qv", op = "%in%", value = 1)))
-    expect_error(gi_extent(s), "unsupported filter op")
+    expect_error(gi_source(pts_file(), "x", "y",
+        filters = list(list(col = "qv", op = "%in%", value = 1))), "unsupported filter op")
+    expect_error(gi_source(pts_file(), "x", "y",
+        filters = list(list(col = "qv", op = ">=", value = c(1, 2)))), "needs one value")
 })
 
 test_that("bounds whose length is not a multiple of 4 are an R error", {
