@@ -1,0 +1,20 @@
+Package: ateratxrs
+Title: Rust Decoder for Atera Transcript Archives
+Version: 0.0.1
+Authors@R: 
+    person("Ruben", "Dries", , "rdries@bu.edu", role = c("aut", "cre"))
+Description: Prototype Rust backend that streams an Atera v1
+    'transcripts.zarr.zip' archive into tiled parquet, in the layout of
+    GiottoDisk's point tile store. Decodes grid cells on threads within one
+    process instead of one forked R session each.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Config/rextendr/version: 0.5.0
+SystemRequirements: Cargo (Rust's package manager), rustc >= 1.65.0, xz
+Depends:
+    R (>= 4.2)
+Suggests:
+    arrow,
+    GiottoDisk
+Config/roxygen2/version: 8.0.0

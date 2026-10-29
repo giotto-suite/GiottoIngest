@@ -1,0 +1,6 @@
+export(gi_count_tiles)
+export(gi_extent)
+export(gi_route_polygons)
+export(gi_source)
+export(gi_write_point_tiles)
+useDynLib(giottoingest, .registration = TRUE)
