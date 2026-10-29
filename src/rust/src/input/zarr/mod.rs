@@ -3,4 +3,5 @@
 
 pub mod archive;
 pub mod atera;
+mod blosc;
 mod atera_layout;

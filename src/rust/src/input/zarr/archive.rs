@@ -110,27 +110,7 @@ impl Archive {
 }
 
 fn blosc_decompress(src: &[u8]) -> Result<Vec<u8>, String> {
-    let mut nbytes = 0usize;
-    let mut cbytes = 0usize;
-    let mut blocksize = 0usize;
-    unsafe {
-        blosc_src::blosc_cbuffer_sizes(
-            src.as_ptr() as *const _, &mut nbytes, &mut cbytes, &mut blocksize,
-        );
-    }
-    if cbytes > src.len() {
-        return Err("truncated blosc buffer".into());
-    }
-    let mut out = vec![0u8; nbytes];
-    let got = unsafe {
-        blosc_src::blosc_decompress_ctx(
-            src.as_ptr() as *const _, out.as_mut_ptr() as *mut _, nbytes, 1,
-        )
-    };
-    if got < 0 || got as usize != nbytes {
-        return Err(format!("blosc decompress failed ({got})"));
-    }
-    Ok(out)
+    super::blosc::decompress(src)
 }
 
 pub fn f32_le(b: &[u8]) -> f32 { f32::from_le_bytes([b[0], b[1], b[2], b[3]]) }

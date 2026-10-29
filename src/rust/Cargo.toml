@@ -18,11 +18,15 @@ extendr-api = '=0.9.0'
 rayon = '1.10'
 mimalloc = { version = '0.1', default-features = false }
 zip = { version = '2', default-features = false }
-blosc-src = { version = '0.3', features = ['zstd'] }
+zstd = { version = '0.13', default-features = false }
 half = '2'
 serde_json = '1'
 arrow = { version = '55', default-features = false, features = ['ipc'] }
 parquet = { version = '55', default-features = false, features = ['arrow', 'snap', 'zstd', 'lz4', 'flate2', 'brotli'] }
+
+[dev-dependencies]
+# reference decoder for the Rust blosc parity test (not linked into the package)
+blosc-src = { version = '0.3', features = ['zstd'] }
 
 [profile.release]
 lto = true

@@ -547,6 +547,7 @@ dependencies = [
  "rayon",
  "serde_json",
  "zip",
+ "zstd",
 ]
 
 [[package]]

@@ -36,6 +36,10 @@ jobs:
           r-version: ${{ matrix.config.r }}
           use-public-rspm: true
           extra-repositories: https://drieslab.r-universe.dev https://giotto-suite.r-universe.dev
+      # terra's Linux binaries need these at run time (tilework imports terra)
+      - name: System libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgdal-dev libproj-dev libgeos-dev libudunits2-dev libsqlite3-dev
       # Installed directly: pak resolves every Suggests, and GiottoDisk is on
       # no repository yet. Its comparison tests skip without it.
       - name: Install dependencies
