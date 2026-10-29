@@ -25,6 +25,7 @@
 #' @name gi_tileApply
 #' @aliases tileApply,gi_source,missing,ANY-method
 #' @exportMethod tileApply
+#' @importFrom tilework tileApply
 NULL
 
 methods::setOldClass("gi_source")

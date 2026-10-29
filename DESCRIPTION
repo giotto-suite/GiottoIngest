@@ -1,12 +1,14 @@
 Package: giottoingest
 Title: Rust Ingest Backend for GiottoDisk Stores
-Version: 0.0.1
+Version: 0.0.2
 Authors@R: 
     person("Ruben", "Dries", , "rdries@bu.edu", role = c("aut", "cre"))
-Description: Prototype Rust passes for writing GiottoDisk tile stores: the
-    extent and per-tile counts that drive GiottoDisk's quadtree tile plan,
-    and a single routed pass that writes every tile, reproducing the R
-    writer's tiles, rows and column types.
+Description: Prototype Rust backend that reads spatial omics inputs fast
+    and writes GiottoDisk point tile stores, reproducing the R writer's
+    tiles, rows and column types. One shared core (per-tile row order, tile
+    layout, parquet writer) with one module per input format: parquet
+    (Xenium, Atera preview, MERSCOPE, bin points) and zarr (Atera v1). The
+    tile plan stays tilework's own; only its counting moves to Rust.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -25,5 +27,5 @@ Suggests:
     future,
     rlang,
     testthat (>= 3.0.0)
-Config/roxygen2/version: 8.0.0
+Config/roxygen2/version: 8.1.1
 Config/testthat/edition: 3
