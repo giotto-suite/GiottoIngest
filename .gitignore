@@ -5,9 +5,5 @@ src/Makevars.win
 src/*.o
 src/*.so
 src/.cargo
-prototypes/ateratxrs/src/rust/target
-prototypes/ateratxrs/src/Makevars
-prototypes/ateratxrs/src/*.o
-prototypes/ateratxrs/src/*.so
 .Rproj.user
 .DS_Store

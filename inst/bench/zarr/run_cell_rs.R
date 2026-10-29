@@ -1,11 +1,11 @@
 #!/usr/bin/env Rscript
-# The Rust decoder (ateratxrs) on grid cells, sized like run_cell.R.
+# The Rust decoder (giottoingest zarr input) on grid cells, sized like run_cell.R.
 #   run_cell_rs.R ZARR TILES OUT_DIR [free_gb] [threads]
 # TILES: one grid cell ("5,3"), a comma-free list "5,3;1,2", or "all".
 suppressPackageStartupMessages({
   library(arrow)
   library(GiottoDisk)
-  library(ateratxrs)
+  library(giottoingest)
 })
 a <- commandArgs(TRUE)
 zarr <- a[[1]]; tiles_arg <- a[[2]]; out <- a[[3]]
@@ -40,7 +40,7 @@ cat(sprintf("%d cell(s), %s rows, threads %d, window %s, buffer %s\n", length(ce
 
 unlink(out, recursive = TRUE); dir.create(out, recursive = TRUE)
 t0 <- Sys.time()
-res <- atera_tx_cells(zarr, cells, ords, s, ti, lk$gene_names, lk$cw_gene,
+res <- gi_atera_tx_cells(zarr, cells, ords, s, ti, lk$gene_names, lk$cw_gene,
   root = file.path(out, "store"), qv_threshold = 20, flip = TRUE,
   window_rows = sz$window_rows, buffer_rows = sz$buffer_rows, threads = threads)
 secs <- as.numeric(difftime(Sys.time(), t0, units = "secs"))

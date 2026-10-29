@@ -1,3 +1,4 @@
+export(gi_atera_tx_cells)
 export(gi_count_tiles)
 export(gi_extent)
 export(gi_route_polygons)

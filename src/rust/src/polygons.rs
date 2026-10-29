@@ -16,7 +16,7 @@ use parquet::basic::Compression;
 use parquet::file::properties::WriterProperties;
 use rayon::prelude::*;
 
-use crate::source::{for_each_batch, reduce_units, source_schema, Spec};
+use crate::input::parquet::{for_each_batch, reduce_units, source_schema, Spec};
 use crate::tiles::Tiles;
 
 /// Envelope per polygon id; `None` is the null id, which R groups as one
@@ -34,7 +34,7 @@ fn keys(b: &RecordBatch, group: &str) -> Result<StringArray, String> {
 }
 
 fn coords(spec: &Spec, b: &RecordBatch) -> Result<(Vec<f64>, Vec<f64>), String> {
-    crate::source::xy(spec, b)
+    crate::input::parquet::xy(spec, b)
 }
 
 pub struct Routed {

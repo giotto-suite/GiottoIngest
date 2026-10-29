@@ -1,2 +1,0 @@
-export(atera_tx_cells)
-useDynLib(ateratxrs, .registration = TRUE)

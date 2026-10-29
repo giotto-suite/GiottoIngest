@@ -9,20 +9,18 @@ use std::fs::{create_dir_all, File};
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, AsArray, BinaryBuilder, DictionaryArray, Float64Array, Int16Array, Int32Array,
-    Int8Array, RecordBatch, StringArray, UInt32Array,
+    Array, ArrayRef, AsArray, DictionaryArray, Float64Array, Int16Array, Int32Array, Int8Array,
+    RecordBatch, StringArray, UInt32Array,
 };
-use arrow::datatypes::{Int16Type, Int32Type, Int8Type};
 use arrow::compute::{cast, concat_batches, take};
-use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::datatypes::{DataType, Field, Int16Type, Int32Type, Int8Type, Schema, SchemaRef};
 use arrow::ipc::reader::FileReader;
 use arrow::ipc::writer::FileWriter;
-use parquet::arrow::ArrowWriter;
-use parquet::basic::Compression;
-use parquet::file::properties::WriterProperties;
 use rayon::prelude::*;
 
-use crate::source::{for_each_batch, reduce_units, source_schema, xy, xy_f32, Spec};
+use crate::core::morton::order;
+use crate::core::tile_write::{base_columns, write_parquet};
+use crate::input::parquet::{for_each_batch, reduce_units, source_schema, xy, xy_f32, Spec};
 use crate::tiles::Tiles;
 
 pub struct Extent {
@@ -167,22 +165,6 @@ impl Levels {
     }
 }
 
-/// GiottoDisk's `.morton_encode()`, with R's signed 32-bit wrap; `None` is NA.
-fn morton(x: f64, y: f64, e: [f64; 4]) -> Option<i32> {
-    let q = |v: f64, lo: f64, hi: f64| -> Option<u32> {
-        let t = (v - lo) / (hi - lo) * 65535.0;
-        if t.is_finite() { Some(t.trunc() as i64 as u32) } else { None }
-    };
-    let spread = |v: u32| -> u32 {
-        let mut v = v & 0x0000_FFFF;
-        v = (v | (v << 8)) & 0x00FF_00FF;
-        v = (v | (v << 4)) & 0x0F0F_0F0F;
-        v = (v | (v << 2)) & 0x3333_3333;
-        (v | (v << 1)) & 0x5555_5555
-    };
-    Some((spread(q(x, e[0], e[1])?) | (spread(q(y, e[2], e[3])?) << 1)) as i32)
-}
-
 pub struct WriteOpts {
     pub id_col: String,
     pub to_string: Vec<String>,
@@ -315,63 +297,16 @@ fn write_tile(
     all: &RecordBatch, meta_fields: &[Field], kinds: &[Kind], levels: &[Option<Levels>], root: &str,
     dir: &str, geo: &str, with_geom: bool,
 ) -> Result<(), String> {
-    let n = all.num_rows();
-    let x = all.column(0).as_any().downcast_ref::<Float64Array>().unwrap();
-    let y = all.column(1).as_any().downcast_ref::<Float64Array>().unwrap();
-    let fold = |a: &Float64Array, f: fn(f64, f64) -> f64, i: f64| a.values().iter().fold(i, |p, v| f(p, *v));
-    let gext = [
-        fold(x, f64::min, f64::INFINITY), fold(x, f64::max, f64::NEG_INFINITY),
-        fold(y, f64::min, f64::INFINITY), fold(y, f64::max, f64::NEG_INFINITY),
-    ];
-    let keys: Vec<Option<i32>> = (0..n).map(|i| morton(x.value(i), y.value(i), gext)).collect();
-    let mut ord: Vec<u32> = (0..n as u32).collect();
-    ord.sort_by_key(|&i| (keys[i as usize].is_none(), keys[i as usize].unwrap_or(0)));
-    let ordv = UInt32Array::from(ord.clone());
-
-    let row_index = Int32Array::from_iter_values(ord.iter().map(|&i| i as i32 + 1));
-    let xo = Float64Array::from_iter_values(ord.iter().map(|&i| x.value(i as usize)));
-    let yo = Float64Array::from_iter_values(ord.iter().map(|&i| y.value(i as usize)));
-    let mut fields = vec![
-        Field::new("row_index", DataType::Int32, true), Field::new("x_index", DataType::Float64, true),
-        Field::new("y_index", DataType::Float64, true),
-    ];
-    let mut cols: Vec<ArrayRef> = vec![Arc::new(row_index), Arc::new(xo), Arc::new(yo)];
-    if with_geom {
-        let mut geom = BinaryBuilder::with_capacity(n, n * 21);
-        let mut wkb = [0u8; 21];
-        wkb[0] = 1;
-        wkb[1..5].copy_from_slice(&1u32.to_le_bytes());
-        for &i in &ord {
-            wkb[5..13].copy_from_slice(&x.value(i as usize).to_le_bytes());
-            wkb[13..21].copy_from_slice(&y.value(i as usize).to_le_bytes());
-            geom.append_value(wkb);
-        }
-        fields.push(Field::new("geom", DataType::Binary, true));
-        cols.push(Arc::new(geom.finish()));
-    }
+    let x = all.column(0).as_any().downcast_ref::<Float64Array>().unwrap().values();
+    let y = all.column(1).as_any().downcast_ref::<Float64Array>().unwrap().values();
+    let (ord, _) = order(x, y);
+    let (mut fields, mut cols) = base_columns(x, y, &ord, 0.0, with_geom);
+    let ordv = UInt32Array::from(ord);
     for (((c, f), kind), lv) in all.columns().iter().skip(2).zip(meta_fields).zip(kinds).zip(levels) {
         let c = finalize(&take(c.as_ref(), &ordv, None).map_err(|e| e.to_string())?, *kind, lv.as_ref())?;
         fields.push(Field::new(f.name(), c.data_type().clone(), true));
         cols.push(c);
     }
-    let md: HashMap<String, String> = if with_geom {
-        HashMap::from([("geo".to_string(), geo.to_string())])
-    } else {
-        HashMap::new()
-    };
-    let schema = Arc::new(Schema::new_with_metadata(fields, md));
-    let batch = RecordBatch::try_new(schema.clone(), cols).map_err(|e| e.to_string())?;
-
-    let d = format!("{root}/{dir}");
-    create_dir_all(&d).map_err(|e| format!("{d}: {e}"))?;
-    let path = format!("{d}/part-0.parquet");
-    let f = File::create(&path).map_err(|e| format!("{path}: {e}"))?;
-    let props = WriterProperties::builder()
-        .set_compression(Compression::SNAPPY)
-        .set_max_row_group_size(1 << 20)
-        .build();
-    let mut w = ArrowWriter::try_new(f, schema, Some(props)).map_err(|e| e.to_string())?;
-    w.write(&batch).map_err(|e| e.to_string())?;
-    w.close().map_err(|e| e.to_string())?;
-    Ok(())
+    write_parquet(&format!("{root}/{dir}/part-0.parquet"), fields, cols,
+        if with_geom { Some(geo.to_string()) } else { None })
 }

@@ -5,6 +5,14 @@
 #' @useDynLib giottoingest, .registration = TRUE
 NULL
 
+#' Stream Atera grid cells into tile partitions on `threads` threads.
+#'
+#' Internal; called by [gi_atera_tx_cells()], which validates the arguments.
+#' Each thread takes the next grid cell in the given order, so pass them
+#' largest first.
+#' @keywords internal
+atera_tx_cells_rs <- function(zarr_path, tiles, ords, s, tile_index, gene_names, cw_gene, root, qv_threshold, flip, window_rows, buffer_rows, threads) .Call(wrap__atera_tx_cells_rs, zarr_path, tiles, ords, s, tile_index, gene_names, cw_gene, root, qv_threshold, flip, window_rows, buffer_rows, threads)
+
 #' Assigns polygons to tiles by envelope centroid and writes each tile's
 #' vertex rows, in row_index order, to `out_dir/<tile_files>`.
 #' @keywords internal

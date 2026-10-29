@@ -3,8 +3,8 @@
 //! routing, buffering and flush order, so the written rows and their
 //! `row_index` match the R decoder.
 
-use crate::write::write_points;
-use crate::zarr::{f16_le, f32_le, u32_le, u8_le, Archive};
+use super::archive::{f16_le, f32_le, u32_le, u8_le, Archive};
+use super::atera_layout::write_points;
 
 pub struct CellPlan {
     pub tile: String,
