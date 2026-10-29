@@ -4,6 +4,7 @@
 # MODE "seq": sequential plan, Rprof (elapsed) -> stage breakdown.
 # MODE "w<N>": N mirai workers, timing only; worker pids are written for the
 # footprint sampler (fp_sampler.sh, started by run_jobs.sh).
+# GD_USE_INGEST=0/1 picks GiottoDisk's R or Rust (GiottoIngest) write path.
 suppressPackageStartupMessages({
   library(arrow)
   library(GiottoDisk)
@@ -11,6 +12,11 @@ suppressPackageStartupMessages({
 })
 options(giotto.has_conda = FALSE, giotto.no_python_warn = TRUE,
         giotto.use_conda = FALSE, progressr.enable = FALSE)
+# GD_USE_INGEST=0 / 1: GiottoDisk's R path or the GiottoIngest (Rust) path,
+# for readers built on GiottoDisk with the integration; unset: its default
+if (nzchar(Sys.getenv("GD_USE_INGEST"))) {
+  options(giottodisk.use_ingest = Sys.getenv("GD_USE_INGEST") == "1")
+}
 a <- commandArgs(TRUE)
 job <- a[[1]]; out <- a[[2]]; mode <- a[[3]]
 here <- dirname(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE)))
