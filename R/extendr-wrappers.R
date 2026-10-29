@@ -13,6 +13,11 @@ NULL
 #' @keywords internal
 atera_tx_cells_rs <- function(zarr_path, tiles, ords, s, tile_index, gene_names, cw_gene, root, qv_threshold, flip, window_rows, buffer_rows, threads) .Call(wrap__atera_tx_cells_rs, zarr_path, tiles, ords, s, tile_index, gene_names, cw_gene, root, qv_threshold, flip, window_rows, buffer_rows, threads)
 
+#' GeoParquet metadata of a point store with extent `ext` (xmin, xmax, ymin,
+#' ymax), as GiottoDisk's `.geoparquet_metadata()` writes it.
+#' @keywords internal
+gi_geo_json_rs <- function(ext) .Call(wrap__gi_geo_json_rs, ext)
+
 #' Assigns polygons to tiles by envelope centroid and writes each tile's
 #' vertex rows, in row_index order, to `out_dir/<tile_files>`.
 #' @keywords internal

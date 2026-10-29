@@ -2,17 +2,17 @@
 # the gDirSource backend; it runs the reader's own disk call.
 # GI_DATA: root of the dataset folders (layout in README.md).
 # GI_SCRATCH: where the CosMx fallback job keeps its decompressed matrix.
-D <- path.expand(Sys.getenv("GI_DATA", "~/Datasets"))
+D <- path.expand(Sys.getenv("GI_DATA", "~/Documents/Datasets"))
 scratch <- path.expand(Sys.getenv("GI_SCRATCH", tempdir()))
 xen_lung <- file.path(D, "Xenium/LungCancer_10X/Xenium_V1_humanLung_Cancer_FFPE_outs")
-xen_mini <- file.path(D, "Cropped_datasets/Xenium/xenium_mini_lung_cancer")
+xen_mini <- file.path(D, "Xenium/LungCancer_10X_small/Xenium_V1_humanLung_Cancer_FFPE_outs")
 atera_bc <- file.path(D, "Atera/WTA_Preview_FFPE_Breast_Cancer_outs")
 atera_kid <- file.path(D, "Atera/Atera_v1_WTA_Kidney_non_diseased_FFPE_outs")
 cosmx_dir <- file.path(D, "CosMx/Breast_cancer/Flatfiles_RNA/flatFiles/BreastCancer")
 vhd_mini <- file.path(D, "Cropped_datasets/VisiumHD/visiumhd_mini_crc/binned_outputs")
-vhd_crc <- file.path(D, "visiumHD/Human_Colon_Cancer_v4/outs/binned_outputs")
+vhd_crc <- file.path(D, "Visium_HD/Human_Colorectal_Cancer")
 st_mini <- file.path(D, "Cropped_datasets/Stereoseq/stereoseq_mini_mouse_eyeball")
-st_testis <- file.path(D, "Stereoseq/Mouse_testis")
+st_testis <- file.path(D, "StereoSeq/C04687E314_backup/outs")
 
 jobs <- list(
   xenium_mini_tx    = function(b) importXeniumDisk(xen_mini, backend = b)$load_transcripts(),
@@ -80,3 +80,10 @@ stages <- c(
   "hdf5 reads"                       = "h5read",
   "forked children (wait)"           = "mclapply"
 )
+
+# MERSCOPE transcripts and Atera v1 zarr transcripts (the zarr input)
+merscope_colon <- file.path(D, "Merscope/Colon_cancer/Vizgen_Colon_Cancer_V2")
+atera_tiny <- file.path(D, "Atera/tiny_atera_dataset_outs")
+jobs$merscope_tx <- function(b) importMerscopeDisk(merscope_colon, backend = b)$load_transcripts()
+jobs$atera_tiny_tx <- function(b) importAteraDisk(atera_tiny, backend = b)$load_transcripts()
+jobs$atera_kid_tx <- function(b) importAteraDisk(atera_kid, backend = b)$load_transcripts()

@@ -96,6 +96,17 @@ fn gi_write_point_tiles_rs(files: Strings, x: &str, y: &str, flip_y: bool, f_col
     pool(threads, || points::write_tiles(&s, b, &o, nthreads(threads)))
 }
 
+/// GeoParquet metadata of a point store with extent `ext` (xmin, xmax, ymin,
+/// ymax), as GiottoDisk's `.geoparquet_metadata()` writes it.
+/// @keywords internal
+#[extendr]
+fn gi_geo_json_rs(ext: &[f64]) -> Result<String> {
+    if ext.len() != 4 {
+        return Err(Error::Other("`ext` must be xmin, xmax, ymin, ymax".into()));
+    }
+    Ok(crate::core::geo::points_geo([ext[0], ext[1], ext[2], ext[3]]))
+}
+
 /// Assigns polygons to tiles by envelope centroid and writes each tile's
 /// vertex rows, in row_index order, to `out_dir/<tile_files>`.
 /// @keywords internal
@@ -194,6 +205,7 @@ fn atera_tx_cells_rs(
 extendr_module! {
     mod giottoingest;
     fn atera_tx_cells_rs;
+    fn gi_geo_json_rs;
     fn gi_route_polygons_rs;
     fn gi_extent_rs;
     fn gi_count_tiles_rs;

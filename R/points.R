@@ -133,6 +133,57 @@ gi_write_point_tiles <- function(src, bounds, tile_dirs, id_col, to_string = cha
     res
 }
 
+#' Write a point tile store from a plan
+#'
+#' The one call a reader needs after planning: writes every non-empty tile
+#' of `plan` as GiottoDisk's point store writer does, into
+#' `root/tile_index=<k>/part-0.parquet` with `k` the tile's index in the plan
+#' (empty tiles leave gaps, as in GiottoDisk), and the store's geoparquet
+#' metadata in every tile.
+#'
+#' Only the non-empty tiles are passed on, as R writes them: the contiguous
+#' edge rules (which tiles' right and bottom edges are inclusive) are taken
+#' over that set.
+#'
+#' @param src from [gi_source()]
+#' @param plan a `freeTilePlan` from [tilework::quadtreePlan()] (with its
+#'   `n_records`), or a list with `bounds` (one row per tile: xmin, xmax,
+#'   ymin, ymax) and `n` (rows per tile)
+#' @param root the store's `source_id=` directory the tiles go under
+#' @param id_col feature id column, written as `feat_ID`
+#' @param to_string columns cast to string, as the reader's schema does
+#' @param drop columns left out
+#' @param geom write the WKB `geom` column and geoparquet metadata
+#'   (GiottoDisk's current point format)
+#' @param threads threads
+#' @param spill_rows rows buffered in memory before spilling to disk
+#' @returns `list(tile_index, counts)`: the plan indices written and their
+#'   row counts
+#' @export
+gi_write_points <- function(src, plan, root, id_col, to_string = character(),
+    drop = character(), geom = TRUE, threads = 1L, spill_rows = 4e6) {
+    if (methods::is(plan, "freeTilePlan")) {
+        bounds <- plan$bounds
+        n <- plan$n_records
+    } else {
+        bounds <- plan$bounds
+        n <- plan$n
+    }
+    bounds <- as.matrix(bounds)
+    if (is.null(n) || length(n) != nrow(bounds)) {
+        stop("[giottoingest] `plan` needs one row count per tile", call. = FALSE)
+    }
+    keep <- which(n > 0)
+    # the store's extent: the whole plan, empty tiles included
+    ext <- c(min(bounds[, 1L]), max(bounds[, 2L]), min(bounds[, 3L]), max(bounds[, 4L]))
+    counts <- gi_write_point_tiles(src, bounds[keep, , drop = FALSE],
+        tile_dirs = sprintf("tile_index=%03d", keep), id_col = id_col,
+        to_string = to_string, drop = drop, root = root,
+        geo_json = gi_geo_json_rs(as.numeric(ext)), spill_rows = spill_rows,
+        geom = geom, threads = threads)
+    list(tile_index = keep, counts = counts)
+}
+
 #' Route polygon vertices to tiles
 #'
 #' Each polygon goes to the tile holding its envelope centroid, as

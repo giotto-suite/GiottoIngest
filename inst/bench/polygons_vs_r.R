@@ -28,7 +28,7 @@ seed <- function(e) {
   tiles
 }
 
-# ---- plan: R's, and the same control flow on Rust counts --------------------
+# ---- plan: R's, and tilework's on the gi_source (Rust counts) ----------------
 rs_ex <- tm(gi_extent(src, threads))
 r_plan <- tm({
   st <- storeCreate(path = file.path(out, "r_plan"), type = "parquetGeomTile")
@@ -37,30 +37,13 @@ r_plan <- tm({
     qtree_args = list(sdimx = cap$sdimx, sdimy = cap$sdimy, contiguous = cap$contiguous))
 })
 rs_plan <- tm({
-  pending <- seed(rs_ex$v$ext)[]
-  leaves <- list(); leaf_n <- numeric(0); depth <- 0L; passes <- 0L
-  measure <- function(ts) {
-    passes <<- passes + 1L
-    gi_count_tiles(src, do.call(rbind, lapply(ts, tw$.ext_to_num_vec)), threads)
-  }
-  while (length(pending) > 0L && depth < 10L) {
-    depth <- depth + 1L
-    m <- measure(pending)
-    nxt <- list()
-    for (k in seq_along(pending)) {
-      if (m[[k]] <= threshold) {
-        leaves <- c(leaves, list(pending[[k]])); leaf_n <- c(leaf_n, m[[k]])
-      } else nxt <- c(nxt, tw$.subdivide_extent(pending[[k]]))
-    }
-    pending <- nxt
-  }
-  if (length(pending) > 0L) { leaves <- c(leaves, pending); leaf_n <- c(leaf_n, measure(pending)) }
-  merged <- tw$.merge_rect_tiles(do.call(rbind, lapply(leaves, tw$.ext_to_num_vec)), leaf_n, threshold)
-  list(bounds = merged$bounds, n = merged$measures, passes = passes)
+  fp <- tilework::quadtreePlan(src, tiles = seed(rs_ex$v$ext), threshold = threshold,
+    threads = threads, verbose = FALSE)
+  list(bounds = fp$bounds, n = as.numeric(fp$n_records))
 })
 rfp <- r_plan$v$store@tiles
-cat(sprintf("plan: R %.1f s, Rust %.1f s (%d count passes); %d tiles; bounds equal %s, counts equal %s\n",
-    r_plan$s, rs_ex$s + rs_plan$s, rs_plan$v$passes, nrow(rs_plan$v$bounds),
+cat(sprintf("plan: R %.1f s, Rust %.1f s; %d tiles; bounds equal %s, counts equal %s\n",
+    r_plan$s, rs_ex$s + rs_plan$s, nrow(rs_plan$v$bounds),
     identical(unname(rfp@bounds), unname(rs_plan$v$bounds)),
     identical(as.numeric(rfp@metadata$n_records), as.numeric(rs_plan$v$n))))
 
@@ -85,9 +68,10 @@ build <- tm(for (I in seq_along(keep)) {
     dplyr::arrange(dplyr::across(dplyr::any_of(c("source_id", "row_index")))) |>
     dplyr::collect() |>
     dplyr::select(-dplyr::any_of(c("row_index", "source_id")))
-  tile_store <- storeCreate(path = gd$.tilepath(gd$.idpath(st@path, st@uid), idx = I),
+  # tile dirs are numbered by plan index, as in R (empty tiles leave gaps)
+  tile_store <- storeCreate(path = gd$.tilepath(gd$.idpath(st@path, st@uid), idx = keep[I]),
                             type = "parquetGeom", uid = st@uid)
-  fmt <- if (isTRUE(cap$split_geom)) sub("%d", paste0(I, "_%d"), cap$split_geom_fmt) else cap$split_geom_fmt
+  fmt <- if (isTRUE(cap$split_geom)) sub("%d", paste0(keep[I], "_%d"), cap$split_geom_fmt) else cap$split_geom_fmt
   do.call(storeWrite, c(list(tile_store, mem_data, type = "polygons", uid_partition = FALSE,
     tile_idx = NULL, split_geom = cap$split_geom, split_geom_fmt = fmt,
     split_geom_sourcename = cap$split_geom_sourcename,

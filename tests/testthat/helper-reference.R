@@ -112,7 +112,8 @@ rs_point_store <- function(src, plan, out, id_col, to_string = character(), drop
     b <- plan$bounds
     geo <- gd()$.geoparquet_metadata(geom_col = "geom", geomtype = "points", crs = "",
         extent = c(min(b[, 1]), max(b[, 2]), min(b[, 3]), max(b[, 4])))
-    dirs <- basename(gd()$.tilepath(out, seq_along(keep)))
+    # tile dirs are numbered by plan index (empty tiles leave gaps), as R's
+    dirs <- basename(gd()$.tilepath(out, keep))
     counts <- gi_write_point_tiles(src, b[keep, , drop = FALSE], dirs, id_col = id_col,
         to_string = to_string, drop = drop, root = out, geo_json = geo,
         spill_rows = spill_rows, geom = geom, threads = threads)

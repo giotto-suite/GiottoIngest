@@ -1,7 +1,8 @@
 #!/usr/bin/env Rscript
 # Rust point tile write vs GiottoDisk's R writer.
 #   points_vs_r.R TX_PARQUET R_TILE_ROOT OUT_DIR [threads] [kind]
-# kind "xenium" (default): 10x transcripts query; "bins": the bins parquet of
+# kind "xenium" (default): 10x transcripts query; "merscope": Vizgen
+# detected_transcripts query (reader defaults); "bins": the bins parquet of
 # .binpoints_store() (plain open_dataset, feat_ID/x/y).
 # R_TILE_ROOT: the `source_id=...` directory of a store written by the R
 # reader (`importXeniumDisk(...)$load_transcripts()`), for the tile check.
@@ -15,6 +16,7 @@ tx <- a[[1]]; r_root <- a[[2]]; out <- a[[3]]
 threads <- if (length(a) >= 4) as.integer(a[[4]]) else 8L
 kind <- if (length(a) >= 5) a[[5]] else "xenium"
 skip_r <- nzchar(Sys.getenv("SKIP_R"))
+drop <- character()
 with_geom <- !identical(Sys.getenv("GEOM"), "0")   # GEOM=0: no WKB column
 n_sample <- if (nzchar(Sys.getenv("SAMPLE"))) as.integer(Sys.getenv("SAMPLE")) else Inf
 gd <- asNamespace("GiottoDisk"); tw <- asNamespace("tilework")
@@ -38,6 +40,14 @@ if (kind == "xenium") {
                    filters = list(list(col = "qv", op = ">=", value = 20)))
   to_string <- intersect(c("transcript_id", "cell_id", "feature_name"),
                          names(arrow::schema(arrow::open_dataset(tx))))
+} else if (kind == "merscope") {
+  # the reader's lazy query (.merscope_transcript_disk read_fun), defaults
+  read_fun <- function(x, schema = NULL) gd$.merscope_tx_query(x,
+    dropcols = c("x", "y", "barcode_id", "transcript_id"), flip_vertical = TRUE)
+  sx <- "global_x"; sy <- "global_y"; id_col <- "gene"; key <- NA
+  src <- gi_source(tx, sx, sy, flip_y = TRUE)
+  to_string <- "cell_id"
+  drop <- c("", "x", "y", "barcode_id", "transcript_id")
 } else {
   read_fun <- function(path, ...) arrow::open_dataset(path, ...)
   sx <- "x"; sy <- "y"; id_col <- "feat_ID"; key <- "feat_ID"
@@ -54,7 +64,7 @@ if (skip_r) cat(sprintf("extent: Rust %.1f s\n", rs_ex$s)) else
 cat(sprintf("extent: R %.1f s, Rust %.1f s; n equal %s, extent equal %s\n", r_ex$s, rs_ex$s,
     identical(r_ex$v$n, rs_ex$v$n), identical(r_ex$v$e, rs_ex$v$ext)))
 
-# ---- plan: GiottoDisk's own, then the same control flow with Rust counts --
+# ---- plan: GiottoDisk's own, and tilework's on the gi_source (Rust counts) --
 n <- rs_ex$v$n
 threshold <- gd$.auto_threshold(n, type = "points")
 seed <- function(e) {
@@ -71,55 +81,27 @@ r_plan <- if (skip_r) NULL else tm({
     qtree_args = list(sdimx = sx, sdimy = sy, contiguous = TRUE))$store@tiles
 })
 
+# the same plan through tilework itself, counts in Rust (tileApply method)
 rs_plan <- tm({
-  pending <- seed(rs_ex$v$ext)[]
-  leaves <- list(); leaf_n <- numeric(0); depth <- 0L; passes <- 0L
-  measure <- function(ts) {
-    passes <<- passes + 1L
-    gi_count_tiles(src, do.call(rbind, lapply(ts, tw$.ext_to_num_vec)), threads)
-  }
-  while (length(pending) > 0L && depth < 10L) {
-    depth <- depth + 1L
-    m <- measure(pending)
-    nxt <- list()
-    for (k in seq_along(pending)) {
-      if (m[[k]] <= threshold) {
-        leaves <- c(leaves, list(pending[[k]])); leaf_n <- c(leaf_n, m[[k]])
-      } else {
-        nxt <- c(nxt, tw$.subdivide_extent(pending[[k]]))
-      }
-    }
-    pending <- nxt
-  }
-  if (length(pending) > 0L) {
-    leaves <- c(leaves, pending); leaf_n <- c(leaf_n, measure(pending))
-  }
-  merged <- tw$.merge_rect_tiles(do.call(rbind, lapply(leaves, tw$.ext_to_num_vec)),
-                                 leaf_n, threshold)
-  list(bounds = merged$bounds, n = merged$measures, passes = passes)
+  fp <- tilework::quadtreePlan(src, tiles = seed(rs_ex$v$ext), threshold = threshold,
+    threads = threads, verbose = FALSE)
+  list(plan = fp, bounds = fp$bounds, n = as.numeric(fp$n_records))
 })
 if (skip_r) {
-  cat(sprintf("plan: Rust %.1f s (%d count passes); %d tiles\n", rs_plan$s, rs_plan$v$passes,
-      nrow(rs_plan$v$bounds)))
+  cat(sprintf("plan: Rust %.1f s; %d tiles\n", rs_plan$s, nrow(rs_plan$v$bounds)))
 } else {
   same_b <- identical(unname(r_plan$v@bounds), unname(rs_plan$v$bounds))
   same_n <- identical(as.numeric(r_plan$v@metadata$n_records), as.numeric(rs_plan$v$n))
-  cat(sprintf("plan: R %.1f s, Rust %.1f s (%d count passes); %d tiles; bounds equal %s, counts equal %s\n",
-      r_plan$s, rs_plan$s, rs_plan$v$passes, nrow(rs_plan$v$bounds), same_b, same_n))
+  cat(sprintf("plan: R %.1f s, Rust %.1f s; %d tiles; bounds equal %s, counts equal %s\n",
+      r_plan$s, rs_plan$s, nrow(rs_plan$v$bounds), same_b, same_n))
 }
 
 # ---- write ---------------------------------------------------------------
-keep <- which(rs_plan$v$n > 0)
-b <- rs_plan$v$bounds
-disk_ext <- c(min(b[, 1]), max(b[, 2]), min(b[, 3]), max(b[, 4]))
-geo <- gd$.geoparquet_metadata(geom_col = "geom", geomtype = "points", crs = "",
-                               extent = disk_ext)
-dirs <- sprintf("tile_index=%03d", seq_along(keep))
 rs_root <- file.path(out, "rs_tiles")
-rs_w <- tm(gi_write_point_tiles(src, b[keep, , drop = FALSE], dirs, id_col = id_col, geom = with_geom,
-  to_string = to_string, root = rs_root, geo_json = geo, threads = threads))
+rs_w <- tm(gi_write_points(src, rs_plan$v$plan, rs_root, id_col = id_col, to_string = to_string,
+  drop = drop, geom = with_geom, threads = threads))
 cat(sprintf("write: Rust %.1f s, %s rows in %d tiles\n", rs_w$s,
-    format(sum(rs_w$v), big.mark = ","), length(keep)))
+    format(sum(rs_w$v$counts), big.mark = ","), length(rs_w$v$tile_index)))
 cat(sprintf("Rust total %.1f s (extent + plan + write)\n", rs_ex$s + rs_plan$s + rs_w$s))
 cat(sprintf("store size %.0f MB (geom %s)\n", sum(file.size(list.files(rs_root, recursive = TRUE,
     full.names = TRUE))) / 1e6, if (with_geom) "written" else "omitted"))
@@ -142,8 +124,13 @@ bad <- 0L
 for (k in pick) {
   x <- as.data.frame(open_dataset(rd[k])); y <- as.data.frame(open_dataset(sd[k]))
   skip <- c("row_index", if (!with_geom) "geom")
-  x <- x[order(x[[key]]), !names(x) %in% skip]
-  y <- y[order(y[[key]]), !names(y) %in% skip]
+  # no unique key (MERSCOPE): order by every column but the WKB, which is
+  # derived from x_index / y_index
+  if (is.na(key)) skip <- c(skip, "geom")
+  x <- x[, !names(x) %in% skip]; y <- y[, !names(y) %in% skip]
+  ox <- if (is.na(key)) do.call(order, unname(as.list(x))) else order(x[[key]])
+  oy <- if (is.na(key)) do.call(order, unname(as.list(y))) else order(y[[key]])
+  x <- x[ox, ]; y <- y[oy, ]
   rownames(x) <- rownames(y) <- NULL
   if (!identical(x, y)) {
     bad <- bad + 1L

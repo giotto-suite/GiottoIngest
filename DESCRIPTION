@@ -14,10 +14,12 @@ Config/rextendr/version: 0.5.0
 SystemRequirements: Cargo (Rust's package manager), rustc >= 1.70.0
 Depends:
     R (>= 4.2)
+Imports:
+    methods,
+    tilework
 Suggests:
     arrow,
     GiottoDisk,
-    tilework,
     terra,
     dplyr,
     future,
