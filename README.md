@@ -1,9 +1,9 @@
-# giottoingest
+# GiottoIngest
 
 An optional Rust backend that reads spatial omics inputs fast and writes GiottoDisk point tile stores, tile for tile the same as GiottoDisk's R writer. Everything after the write stays in the Giotto Suite. It's a prototype: validated against GiottoDisk, not yet wired in (GiottoDisk is unchanged; the bench scripts call it).
 
 ## Scope and decisions
-- **Always optional.** GiottoDisk keeps an R-native method for every ingest step. That method is the reference, the fallback, and the default when giottoingest isn't installed. Nothing in GiottoDisk may require Rust. The planned switch is `giottodisk.ingest_backend = c("auto", "rust", "r")`.
+- **Always optional.** GiottoDisk keeps an R-native method for every ingest step. That method is the reference, the fallback, and the default when GiottoIngest isn't installed. Nothing in GiottoDisk may require Rust. The planned switch is the option `giottodisk.use_ingest` (default `TRUE`), gated like `giottodisk.use_kernels`: Rust when GiottoIngest is installed and has the capability (`has_capability()`), R otherwise.
 - **Read fast, write tiles, stop.** The backend reads, filters, plans (through tilework) and writes; GiottoDisk builds the store object and does everything after.
 - **Transcripts first.** Point data (transcripts, bin points) is where the gains are. Polygon routing works and is validated, but it is frozen: R still builds the polygons (terra/GEOS repair), so the end-to-end gain is small.
 - **One package, one crate:** a shared core with one module per input format.
@@ -13,7 +13,7 @@ An optional Rust backend that reads spatial omics inputs fast and writes GiottoD
 ## Use
 
 ```r
-library(giottoingest)
+library(GiottoIngest)
 src <- gi_source("transcripts.parquet", "x_location", "y_location", flip_y = TRUE,
     filters = list(list(col = "qv", op = ">=", value = 20)))
 ex <- gi_extent(src, threads = 8)                      # n and extent
@@ -93,19 +93,19 @@ All runs: Apple M2 Ultra (24 cores, 192 GB), macOS 14, GiottoDisk `dev` `b29361a
 6. **Stereo-seq's remaining cost is the GEF matrix ingest**, not tiling.
 
 ## Next
-1. **Wire into GiottoDisk** behind the option: `storeWrite(parquetGeomTileStore, queryableStore)` builds a `gi_source` from the reader's query, plans with `quadtreePlan(src, ...)`, writes with `gi_write_points()`; the Atera zarr reader calls `gi_atera_tx_cells()`.
+1. **Wire into GiottoDisk** behind `giottodisk.use_ingest`: `storeWrite(parquetGeomTileStore, queryableStore)` builds a `gi_source` from the reader's query, plans with `quadtreePlan(src, ...)`, writes with `gi_write_points()`; the Atera zarr reader calls `gi_atera_tx_cells()`.
 2. **csv input** (delimited transcripts, wide matrices: MERSCOPE `cell_by_gene.csv`, CosMx without cosmxscan).
 3. **Cache the filtered coordinates** across the counting passes (the plan is about a third of Atera breast's time).
 4. **Parallel R polygon build** across tiles, in GiottoDisk, if polygons need to be faster.
 
 ## Requirements
-- **Rust:** Cargo and rustc ≥ 1.70, and a C compiler (blosc). The first build fetches crates and takes a few minutes.
+- **Rust:** Cargo and rustc ≥ 1.81, and a C compiler (blosc). The first build fetches crates and takes a few minutes.
 - **R:** tilework (Imports). For tests and benches: arrow (with zstd), GiottoDisk `dev`, terra, dplyr, future, rlang, testthat; data.table, future.mirai, mirai for the reader profiles.
 - **Platform:** developed on macOS. `fp_sampler.sh` (memory sampling) uses macOS `footprint`; the rest is portable.
 
 ## Install
 ```sh
-R CMD INSTALL giottoingest
+R CMD INSTALL GiottoIngest
 ```
 
 ## Tests
@@ -132,7 +132,7 @@ Edit the paths at the top of `inst/bench/readers/jobs.R` if your folders differ.
 Every comparison needs an R reference store, written by GiottoDisk's own reader.
 
 ```sh
-B=giottoingest/inst/bench
+B=GiottoIngest/inst/bench
 rroot() { for d in $1/project/artifacts/*/data/source_id=*; do ls -d $d/tile_index=* >/dev/null 2>&1 && { echo $d; return; }; done; }
 
 # 1. transcripts: the R reader once, then compare (kinds: xenium, merscope, bins)

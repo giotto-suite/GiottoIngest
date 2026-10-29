@@ -1,5 +1,5 @@
 # Shared harness: synthetic parquet inputs, the GiottoDisk R writer as the
-# reference, and the same plan / write done through giottoingest.
+# reference, and the same plan / write done through GiottoIngest.
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
@@ -105,7 +105,7 @@ r_point_store <- function(qs, out, threshold, id_col, sx, sy) {
         bounds = unname(st@tiles@bounds), n = as.numeric(st@tiles@metadata$n_records))
 }
 
-# giottoingest's write of the same store, on the given plan.
+# GiottoIngest's write of the same store, on the given plan.
 rs_point_store <- function(src, plan, out, id_col, to_string = character(), drop = character(),
                            geom = TRUE, threads = 2L, spill_rows = 4e6) {
     keep <- which(plan$n > 0)

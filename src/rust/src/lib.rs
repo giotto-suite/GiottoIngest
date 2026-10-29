@@ -54,7 +54,7 @@ fn bounds(b: &Robj) -> Result<Vec<[f64; 4]>> {
 fn pool<T: Send>(threads: i32, f: impl FnOnce() -> std::result::Result<T, String> + Send) -> Result<T> {
     let p = rayon::ThreadPoolBuilder::new().num_threads(nthreads(threads)).build()
         .map_err(|e| Error::Other(e.to_string()))?;
-    p.install(f).map_err(|e| Error::Other(format!("[giottoingest] {e}")))
+    p.install(f).map_err(|e| Error::Other(format!("[GiottoIngest] {e}")))
 }
 
 /// Rows and extent of the filtered source.
@@ -94,6 +94,14 @@ fn gi_write_point_tiles_rs(files: Strings, x: &str, y: &str, flip_y: bool, f_col
         spill_dir: spill_dir.into(), spill_rows: spill_rows as usize, geom,
     };
     pool(threads, || points::write_tiles(&s, b, &o, nthreads(threads)))
+}
+
+/// What this build can do, for GiottoDisk to gate on (see `has_capability()`).
+/// Names are only ever added; a build without one falls back to R.
+/// @keywords internal
+#[extendr]
+fn capabilities_rs() -> Vec<String> {
+    ["points_parquet", "points_atera_zarr"].iter().map(|s| s.to_string()).collect()
 }
 
 /// GeoParquet metadata of a point store with extent `ext` (xmin, xmax, ymin,
@@ -195,7 +203,7 @@ fn atera_tx_cells_rs(
     let mut out: Vec<Robj> = Vec::with_capacity(plans.len());
     for (k, r) in results.into_inner().unwrap().into_iter().enumerate() {
         let r = r.ok_or_else(|| Error::Other(format!("cell {} not run", plans[k].tile)))?
-            .map_err(|e| Error::Other(format!("[giottoingest] Atera cell {}: {e}", plans[k].tile)))?;
+            .map_err(|e| Error::Other(format!("[GiottoIngest] Atera cell {}: {e}", plans[k].tile)))?;
         let bounds: Vec<f64> = r.bounds.iter().flat_map(|b| b.iter().copied()).collect();
         out.push(list!(tile_index = r.tile_index, counts = r.counts, bounds = bounds).into());
     }
@@ -203,8 +211,9 @@ fn atera_tx_cells_rs(
 }
 
 extendr_module! {
-    mod giottoingest;
+    mod GiottoIngest;
     fn atera_tx_cells_rs;
+    fn capabilities_rs;
     fn gi_geo_json_rs;
     fn gi_route_polygons_rs;
     fn gi_extent_rs;

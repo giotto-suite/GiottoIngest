@@ -9,7 +9,7 @@
 suppressPackageStartupMessages({
   library(arrow)
   library(GiottoDisk)
-  library(giottoingest)
+  library(GiottoIngest)
 })
 a <- commandArgs(TRUE)
 tx <- a[[1]]; r_root <- a[[2]]; out <- a[[3]]

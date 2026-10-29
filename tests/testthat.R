@@ -1,4 +1,4 @@
 library(testthat)
-library(giottoingest)
+library(GiottoIngest)
 
-test_check("giottoingest")
+test_check("GiottoIngest")

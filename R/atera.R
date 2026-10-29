@@ -29,11 +29,11 @@ gi_atera_tx_cells <- function(zarr_path, tiles, ords, s, tile_index, gene_names,
     buffer_rows = 4194304, threads = 1L) {
     n <- length(tiles)
     if (length(ords) != n || length(s) != n || length(tile_index) != n) {
-        stop("[giottoingest] `tiles`, `ords`, `s` and `tile_index` need one entry per grid cell",
+        stop("[GiottoIngest] `tiles`, `ords`, `s` and `tile_index` need one entry per grid cell",
             call. = FALSE)
     }
     if (any(lengths(tile_index) != as.integer(s)^2L)) {
-        stop("[giottoingest] each grid cell needs s^2 tile indices", call. = FALSE)
+        stop("[GiottoIngest] each grid cell needs s^2 tile indices", call. = FALSE)
     }
     res <- atera_tx_cells_rs(normalizePath(zarr_path), as.character(tiles),
         as.integer(ords), as.integer(s), lapply(tile_index, as.integer),

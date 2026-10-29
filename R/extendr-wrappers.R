@@ -2,7 +2,7 @@
 # nolint start
 
 #' @usage NULL
-#' @useDynLib giottoingest, .registration = TRUE
+#' @useDynLib GiottoIngest, .registration = TRUE
 NULL
 
 #' Stream Atera grid cells into tile partitions on `threads` threads.
@@ -12,6 +12,11 @@ NULL
 #' largest first.
 #' @keywords internal
 atera_tx_cells_rs <- function(zarr_path, tiles, ords, s, tile_index, gene_names, cw_gene, root, qv_threshold, flip, window_rows, buffer_rows, threads) .Call(wrap__atera_tx_cells_rs, zarr_path, tiles, ords, s, tile_index, gene_names, cw_gene, root, qv_threshold, flip, window_rows, buffer_rows, threads)
+
+#' What this build can do, for GiottoDisk to gate on (see `has_capability()`).
+#' Names are only ever added; a build without one falls back to R.
+#' @keywords internal
+capabilities_rs <- function() .Call(wrap__capabilities_rs)
 
 #' GeoParquet metadata of a point store with extent `ext` (xmin, xmax, ymin,
 #' ymax), as GiottoDisk's `.geoparquet_metadata()` writes it.

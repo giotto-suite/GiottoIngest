@@ -1,6 +1,6 @@
-Package: giottoingest
+Package: GiottoIngest
 Title: Rust Ingest Backend for GiottoDisk Stores
-Version: 0.0.2
+Version: 0.1.0
 Authors@R: 
     person("Ruben", "Dries", , "rdries@bu.edu", role = c("aut", "cre"))
 Description: Prototype Rust backend that reads spatial omics inputs fast
@@ -13,7 +13,7 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 Config/rextendr/version: 0.5.0
-SystemRequirements: Cargo (Rust's package manager), rustc >= 1.70.0
+SystemRequirements: Cargo (Rust's package manager), rustc >= 1.81.0
 Depends:
     R (>= 4.2)
 Imports:

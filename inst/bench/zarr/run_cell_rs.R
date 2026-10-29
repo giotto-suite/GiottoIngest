@@ -1,11 +1,11 @@
 #!/usr/bin/env Rscript
-# The Rust decoder (giottoingest zarr input) on grid cells, sized like run_cell.R.
+# The Rust decoder (GiottoIngest zarr input) on grid cells, sized like run_cell.R.
 #   run_cell_rs.R ZARR TILES OUT_DIR [free_gb] [threads]
 # TILES: one grid cell ("5,3"), a comma-free list "5,3;1,2", or "all".
 suppressPackageStartupMessages({
   library(arrow)
   library(GiottoDisk)
-  library(giottoingest)
+  library(GiottoIngest)
 })
 a <- commandArgs(TRUE)
 zarr <- a[[1]]; tiles_arg <- a[[2]]; out <- a[[3]]

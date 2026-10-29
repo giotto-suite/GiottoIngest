@@ -15,13 +15,13 @@ gi_source <- function(files, x, y, flip_y = FALSE, filters = list()) {
     ops <- c(">=", ">", "<=", "<", "==", "!=", "in")
     for (f in filters) {
         if (!is.list(f) || !all(c("col", "op", "value") %in% names(f))) {
-            stop("[giottoingest] each filter is list(col, op, value)", call. = FALSE)
+            stop("[GiottoIngest] each filter is list(col, op, value)", call. = FALSE)
         }
         if (!f$op %in% ops) {
-            stop("[giottoingest] unsupported filter op `", f$op, "`", call. = FALSE)
+            stop("[GiottoIngest] unsupported filter op `", f$op, "`", call. = FALSE)
         }
         if (f$op != "in" && length(f$value) != 1L) {
-            stop("[giottoingest] filter `", f$col, " ", f$op, "` needs one value", call. = FALSE)
+            stop("[GiottoIngest] filter `", f$col, " ", f$op, "` needs one value", call. = FALSE)
         }
     }
     s <- list(files = normalizePath(files), x = x, y = y, flip_y = isTRUE(flip_y),
@@ -40,7 +40,7 @@ gi_source <- function(files, x, y, flip_y = FALSE, filters = list()) {
     b <- as.matrix(bounds)
     if (length(b) == 0L) return(numeric(0))
     if (ncol(b) != 4L || !is.numeric(b) || anyNA(b)) {
-        stop("[giottoingest] `bounds` must be a numeric matrix with columns ",
+        stop("[GiottoIngest] `bounds` must be a numeric matrix with columns ",
             "xmin, xmax, ymin, ymax and no NA", call. = FALSE)
     }
     as.numeric(t(b))
@@ -51,7 +51,7 @@ gi_source <- function(files, x, y, flip_y = FALSE, filters = list()) {
 .threads <- function(threads) {
     threads <- suppressWarnings(as.integer(threads))
     if (length(threads) != 1L || is.na(threads)) {
-        stop("[giottoingest] `threads` must be a single integer", call. = FALSE)
+        stop("[GiottoIngest] `threads` must be a single integer", call. = FALSE)
     }
     max(threads, 1L)
 }
@@ -101,7 +101,7 @@ gi_write_point_tiles <- function(src, bounds, tile_dirs, id_col, to_string = cha
     drop = character(), root, geo_json, spill_rows = 4e6, geom = TRUE, threads = 1L) {
     bv <- .bounds_vec(bounds)
     if (length(tile_dirs) != .n_bounds(bounds)) {
-        stop("[giottoingest] `tile_dirs` needs one name per tile (", .n_bounds(bounds), ")",
+        stop("[GiottoIngest] `tile_dirs` needs one name per tile (", .n_bounds(bounds), ")",
             call. = FALSE)
     }
     threads <- .threads(threads)
@@ -171,7 +171,7 @@ gi_write_points <- function(src, plan, root, id_col, to_string = character(),
     }
     bounds <- as.matrix(bounds)
     if (is.null(n) || length(n) != nrow(bounds)) {
-        stop("[giottoingest] `plan` needs one row count per tile", call. = FALSE)
+        stop("[GiottoIngest] `plan` needs one row count per tile", call. = FALSE)
     }
     keep <- which(n > 0)
     # the store's extent: the whole plan, empty tiles included
@@ -201,7 +201,7 @@ gi_write_points <- function(src, plan, root, id_col, to_string = character(),
 gi_route_polygons <- function(src, bounds, group, out_dir, tile_files, threads = 1L) {
     bv <- .bounds_vec(bounds)
     if (length(tile_files) != .n_bounds(bounds)) {
-        stop("[giottoingest] `tile_files` needs one name per tile (", .n_bounds(bounds), ")",
+        stop("[GiottoIngest] `tile_files` needs one name per tile (", .n_bounds(bounds), ")",
             call. = FALSE)
     }
     do.call(gi_route_polygons_rs, c(.src_args(src), list(

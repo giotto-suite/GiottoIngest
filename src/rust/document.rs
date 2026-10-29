@@ -6,13 +6,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         # nolint start\n\
         \n\
         #' @usage NULL\n\
-        #' @useDynLib giottoingest, .registration = TRUE\n\
+        #' @useDynLib GiottoIngest, .registration = TRUE\n\
         NULL\n\
         \n\
     ";
     let footer = "# nolint end\n";
-    let wrappers = giottoingest::get_giottoingest_metadata()
-        .make_r_wrappers(true, "giottoingest")
+    let wrappers = giottoingest::get_GiottoIngest_metadata()
+        .make_r_wrappers(true, "GiottoIngest")
         .map_err(|e| format!("failed to generate wrappers: {e}"))?;
     std::fs::write(wrapper_path, format!("{header}{wrappers}{footer}"))
         .map_err(|e| format!("failed to write {wrapper_path}: {e}"))?;

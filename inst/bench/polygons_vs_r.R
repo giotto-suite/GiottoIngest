@@ -6,7 +6,7 @@
 suppressPackageStartupMessages({
   library(arrow)
   library(GiottoDisk)
-  library(giottoingest)
+  library(GiottoIngest)
 })
 options(tilework.warn_sequential = FALSE)
 a <- commandArgs(TRUE)
