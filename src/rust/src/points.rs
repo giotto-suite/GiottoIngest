@@ -88,7 +88,7 @@ fn spill_type(dt: &DataType, to_string: bool) -> Result<(DataType, Kind), String
         Boolean => (Boolean, Kind::Plain),
         Date32 => (Date32, Kind::Plain),
         Dictionary(_, v) if matches!(v.as_ref(), Utf8 | LargeUtf8 | Utf8View) => (Utf8, Kind::Dict),
-        o => return Err(format!("column type {o} not supported yet")),
+        o => return Err(format!("unsupported: column type {o}")),
     })
 }
 
@@ -200,7 +200,8 @@ pub fn write_tiles(
     let mut kinds = Vec::with_capacity(meta.len());
     for m in &meta {
         let f = src.field_with_name(m).map_err(|_| format!("no column `{m}`"))?;
-        let (dt, kind) = spill_type(f.data_type(), o.to_string.contains(m))?;
+        let (dt, kind) = spill_type(f.data_type(), o.to_string.contains(m))
+            .map_err(|e| format!("{e} (column `{m}`)"))?;
         let name = if m == &o.id_col { "feat_ID".to_string() } else { m.clone() };
         meta_fields.push(Field::new(name, dt, true));
         kinds.push(kind);
@@ -275,6 +276,7 @@ pub fn write_tiles(
 
     // each tile: read its parts in order, number, Morton-sort, write
     (0..nt).into_par_iter().filter(|k| parts[*k] > 0).try_for_each(|k| -> Result<(), String> {
+        crate::core::cancel::check()?;
         let mut bs = Vec::new();
         for p in 0..parts[k] {
             let path = format!("{}/t{k}_{p:06}.arrow", o.spill_dir);

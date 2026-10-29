@@ -51,10 +51,11 @@ fn bounds(b: &Robj) -> Result<Vec<[f64; 4]>> {
     Ok(v.chunks(4).map(|c| [c[0], c[1], c[2], c[3]]).collect())
 }
 
+/// Runs `f` on a pool of `threads`, interruptible from R.
 fn pool<T: Send>(threads: i32, f: impl FnOnce() -> std::result::Result<T, String> + Send) -> Result<T> {
     let p = rayon::ThreadPoolBuilder::new().num_threads(nthreads(threads)).build()
         .map_err(|e| Error::Other(e.to_string()))?;
-    p.install(f).map_err(|e| Error::Other(format!("[GiottoIngest] {e}")))
+    crate::core::cancel::run(|| p.install(f)).map_err(|e| Error::Other(format!("[GiottoIngest] {e}")))
 }
 
 /// Rows and extent of the filtered source.
@@ -187,18 +188,21 @@ fn atera_tx_cells_rs(
     let next = AtomicUsize::new(0);
     let results: Mutex<Vec<Option<std::result::Result<CellResult, String>>>> =
         Mutex::new((0..plans.len()).map(|_| None).collect());
-    std::thread::scope(|sc| {
-        for _ in 0..nthreads(threads) {
-            sc.spawn(|| loop {
-                let k = next.fetch_add(1, Ordering::SeqCst);
-                if k >= plans.len() {
-                    break;
-                }
-                let r = run_cell(zarr_path, &plans[k], &lk, &opts);
-                results.lock().unwrap()[k] = Some(r);
-            });
-        }
-    });
+    crate::core::cancel::run(|| {
+        std::thread::scope(|sc| {
+            for _ in 0..nthreads(threads) {
+                sc.spawn(|| loop {
+                    let k = next.fetch_add(1, Ordering::SeqCst);
+                    if k >= plans.len() || crate::core::cancel::check().is_err() {
+                        break;
+                    }
+                    let r = run_cell(zarr_path, &plans[k], &lk, &opts);
+                    results.lock().unwrap()[k] = Some(r);
+                });
+            }
+        });
+        Ok(())
+    }).map_err(|e| Error::Other(format!("[GiottoIngest] {e}")))?;
 
     let mut out: Vec<Robj> = Vec::with_capacity(plans.len());
     for (k, r) in results.into_inner().unwrap().into_iter().enumerate() {

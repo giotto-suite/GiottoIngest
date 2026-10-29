@@ -114,6 +114,11 @@ fn apply_filters(spec: &Spec, b: RecordBatch) -> Result<RecordBatch, String> {
     let mut mask: Option<BooleanArray> = None;
     for f in &spec.filters {
         let col = b.column_by_name(&f.col).ok_or(format!("no column `{}`", f.col))?;
+        // numeric only: arrow would otherwise parse strings as numbers
+        if !(col.data_type().is_integer() || col.data_type().is_floating()) {
+            return Err(format!("unsupported: filter column `{}` is {}, not numeric",
+                f.col, col.data_type()));
+        }
         let v_col = as_f64(col)?;
         // arrow casts the scalar to a float32 column's type before comparing
         let m = if f.op == "in" {
@@ -184,6 +189,7 @@ pub fn for_each_batch(
     let target = source_schema(spec)?;
     let window = (threads * 2).max(1);
     for chunk in us.chunks(window) {
+        crate::core::cancel::check()?;
         let decoded: Vec<Result<Vec<RecordBatch>, String>> = chunk
             .par_iter()
             .map(|u| {
@@ -195,6 +201,7 @@ pub fn for_each_batch(
             .collect();
         for r in decoded {
             for b in r? {
+                crate::core::cancel::check()?;
                 if b.num_rows() > 0 {
                     f(b)?;
                 }
@@ -223,6 +230,7 @@ pub fn reduce_units<T: Send>(
     let target = source_schema(spec)?;
     us.par_iter()
         .map(|u| -> Result<T, String> {
+            crate::core::cancel::check()?;
             let mut acc = init();
             for b in read_unit(spec, u, &need, &target)? {
                 let b = apply_filters(spec, b)?;

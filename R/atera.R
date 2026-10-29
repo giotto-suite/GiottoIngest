@@ -35,12 +35,12 @@ gi_atera_tx_cells <- function(zarr_path, tiles, ords, s, tile_index, gene_names,
     if (any(lengths(tile_index) != as.integer(s)^2L)) {
         stop("[GiottoIngest] each grid cell needs s^2 tile indices", call. = FALSE)
     }
-    res <- atera_tx_cells_rs(normalizePath(zarr_path), as.character(tiles),
+    res <- .rs(atera_tx_cells_rs(normalizePath(zarr_path), as.character(tiles),
         as.integer(ords), as.integer(s), lapply(tile_index, as.integer),
         as.character(gene_names), as.integer(cw_gene), path.expand(root),
         if (is.null(qv_threshold)) NA_real_ else as.numeric(qv_threshold),
         isTRUE(flip), as.numeric(window_rows), as.numeric(buffer_rows),
-        .threads(threads))
+        .threads(threads)))
     lapply(res, function(r) {
         r$bounds <- matrix(r$bounds, ncol = 4L, byrow = TRUE,
             dimnames = list(NULL, c("xmin", "xmax", "ymin", "ymax")))

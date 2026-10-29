@@ -150,7 +150,7 @@ pub fn run_cell(zarr: &str, cp: &CellPlan, lk: &Lookups, o: &Opts) -> Result<Cel
     let m_ovl = ar.meta(&pref("overlaps_nucleus"))?;
     for (m, want) in [(&m_loc, "<f4"), (&m_cw, "<u4"), (&m_qv, "<f2"), (&m_cid, "<u4"), (&m_ovl, "|u1")] {
         if m.dtype != want {
-            return Err(format!("tile {}: dtype {} where {} expected", cp.tile, m.dtype, want));
+            return Err(format!("unsupported: tile {}: dtype {} where {} expected", cp.tile, m.dtype, want));
         }
     }
     let n = m_loc.shape[0];
@@ -211,6 +211,7 @@ pub fn run_cell(zarr: &str, cp: &CellPlan, lk: &Lookups, o: &Opts) -> Result<Cel
 
     let mut r0 = 0usize;
     while r0 < n {
+        crate::core::cancel::check()?;
         let r1 = (r0 + o.window_rows).min(n);
         let loc = ar.read_cols(&pref("location"), &m_loc, r0, r1, 4, f32_le)?;
         let cw = ar.read_cols(&pref("codeword_identity"), &m_cw, r0, r1, 4, u32_le)?;

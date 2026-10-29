@@ -20,6 +20,9 @@ gi_source <- function(files, x, y, flip_y = FALSE, filters = list()) {
         if (!f$op %in% ops) {
             stop("[GiottoIngest] unsupported filter op `", f$op, "`", call. = FALSE)
         }
+        if (!is.numeric(f$value)) {
+            .unsupported("filter `", f$col, " ", f$op, "` needs numeric values")
+        }
         if (f$op != "in" && length(f$value) != 1L) {
             stop("[GiottoIngest] filter `", f$col, " ", f$op, "` needs one value", call. = FALSE)
         }
@@ -30,6 +33,29 @@ gi_source <- function(files, x, y, flip_y = FALSE, filters = list()) {
         f_vals = lapply(filters, function(f) as.numeric(f$value)))
     class(s) <- "gi_source"
     s
+}
+
+# An input the Rust path does not handle (column type, non-numeric filter):
+# GiottoDisk catches this class and writes the store in R instead.
+.unsupported <- function(...) {
+    stop(errorCondition(paste0("[GiottoIngest] ", ...), class = "giottoingest_unsupported",
+        call = NULL))
+}
+
+# Rust errors starting "unsupported:" get that class too; a user interrupt
+# that stopped the pass is signalled with R's "interrupt" class, as an
+# interrupted R write would be.
+.rs <- function(expr) {
+    withCallingHandlers(expr, error = function(e) {
+        msg <- conditionMessage(e)
+        if (grepl("unsupported: ", msg, fixed = TRUE)) {
+            .unsupported(sub(".*unsupported: ", "", msg))
+        }
+        if (grepl("[GiottoIngest] interrupted", msg, fixed = TRUE)) {
+            stop(errorCondition("[GiottoIngest] interrupted",
+                class = c("giottoingest_interrupted", "interrupt"), call = NULL))
+        }
+    })
 }
 
 .src_args <- function(src) {
@@ -62,7 +88,7 @@ gi_source <- function(files, x, y, flip_y = FALSE, filters = list()) {
 #' @returns `list(n, ext)`, `ext` as xmin, xmax, ymin, ymax
 #' @export
 gi_extent <- function(src, threads = 1L) {
-    do.call(gi_extent_rs, c(.src_args(src), threads = .threads(threads)))
+    .rs(do.call(gi_extent_rs, c(.src_args(src), threads = .threads(threads))))
 }
 
 #' Rows of a point source per tile
@@ -75,8 +101,8 @@ gi_extent <- function(src, threads = 1L) {
 #' @returns numeric counts, one per tile
 #' @export
 gi_count_tiles <- function(src, bounds, threads = 1L) {
-    do.call(gi_count_tiles_rs, c(.src_args(src),
-        list(bounds_v = .bounds_vec(bounds), threads = .threads(threads))))
+    .rs(do.call(gi_count_tiles_rs, c(.src_args(src),
+        list(bounds_v = .bounds_vec(bounds), threads = .threads(threads)))))
 }
 
 #' Write a point tile store's tiles
@@ -122,13 +148,13 @@ gi_write_point_tiles <- function(src, bounds, tile_dirs, id_col, to_string = cha
             }
         }
     }, add = TRUE)
-    res <- do.call(gi_write_point_tiles_rs, c(.src_args(src), list(
+    res <- .rs(do.call(gi_write_point_tiles_rs, c(.src_args(src), list(
         bounds_v = bv, tile_dirs = as.character(tile_dirs),
         id_col = id_col, to_string = as.character(to_string),
         drop_cols = as.character(drop), root = root,
         geo_json = geo_json, spill_dir = spill,
         spill_rows = as.numeric(spill_rows), geom = isTRUE(geom),
-        threads = threads)))
+        threads = threads))))
     ok <- TRUE
     res
 }
@@ -204,7 +230,7 @@ gi_route_polygons <- function(src, bounds, group, out_dir, tile_files, threads =
         stop("[GiottoIngest] `tile_files` needs one name per tile (", .n_bounds(bounds), ")",
             call. = FALSE)
     }
-    do.call(gi_route_polygons_rs, c(.src_args(src), list(
+    .rs(do.call(gi_route_polygons_rs, c(.src_args(src), list(
         bounds_v = bv, group = group, out_dir = path.expand(out_dir),
-        tile_files = as.character(tile_files), threads = .threads(threads))))
+        tile_files = as.character(tile_files), threads = .threads(threads)))))
 }
