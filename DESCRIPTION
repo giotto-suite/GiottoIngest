@@ -29,5 +29,7 @@ Suggests:
     future,
     rlang,
     testthat (>= 3.0.0)
+Remotes:
+    drieslab/tilework
 Config/roxygen2/version: 8.1.1
 Config/testthat/edition: 3
